@@ -78,15 +78,27 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Seleccionar la primera nota automáticamente en escritorio si no hay ninguna seleccionada
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  );
+
   useEffect(() => {
-    if (!selectedNoteId && notes.length > 0) {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Seleccionar la primera nota automáticamente SOLO en escritorio
+  useEffect(() => {
+    if (isDesktop && !selectedNoteId && notes.length > 0) {
       const activeNotes = notes.filter((n) => !n.deleted);
       if (activeNotes.length > 0) {
         setSelectedNoteId(activeNotes[0].id);
       }
     }
-  }, [notes, selectedNoteId]);
+  }, [isDesktop, notes, selectedNoteId]);
 
   // Manejadores de autenticación
   const handleConnectGoogle = () => {
@@ -236,8 +248,12 @@ export const App: React.FC = () => {
             note={activeNote}
             token={token}
             onNoteDeleted={() => {
-              const remaining = notes.filter((n) => !n.deleted && n.id !== selectedNoteId);
-              setSelectedNoteId(remaining.length > 0 ? remaining[0].id : null);
+              if (isDesktop) {
+                const remaining = notes.filter((n) => !n.deleted && n.id !== selectedNoteId);
+                setSelectedNoteId(remaining.length > 0 ? remaining[0].id : null);
+              } else {
+                setSelectedNoteId(null);
+              }
             }}
           />
         </div>
