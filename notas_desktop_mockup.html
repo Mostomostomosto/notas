@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Notas — mockup escritorio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F7F4EE;
+    --paper-dim: #EFEBE2;
+    --card: #FFFFFF;
+    --ink: #2B2A28;
+    --muted: #8A8478;
+    --border: #E4DECE;
+    --accent: #3F6E64;
+    --accent-soft: #E4EEEC;
+    --pin: #C98A3D;
+    --sidebar: #EDEAE2;
+    --danger: #B4553F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Inter", sans-serif;
+    background: var(--paper-dim);
+    color: var(--ink);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 240px 320px 1fr;
+    height: 100vh;
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  /* ---------- SIDEBAR ---------- */
+  .sidebar {
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+    padding: 18px 12px;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    margin-bottom: 22px;
+  }
+
+  .sidebar-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 10px;
+    margin-bottom: 6px;
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    color: var(--ink);
+    cursor: pointer;
+    margin-bottom: 1px;
+  }
+
+  .sidebar-item:hover { background: rgba(0,0,0,0.04); }
+  .sidebar-item.active { background: var(--accent); color: var(--paper); }
+  .sidebar-item.active .count { color: var(--paper); opacity: 0.75; }
+
+  .sidebar-item .left { display: flex; align-items: center; gap: 9px; }
+  .sidebar-item .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .sidebar-item .count { font-size: 12px; color: var(--muted); }
+
+  .icon { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.75; }
+  .sidebar-item.active .icon { opacity: 1; }
+
+  .new-folder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  /* ---------- LIST ---------- */
+  .list-pane {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .list-header {
+    padding: 18px 18px 12px;
+  }
+
+  .list-header h1 {
+    font-size: 20px;
+    margin: 0 0 12px;
+    font-weight: 600;
+  }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+
+  .search-box input {
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 13.5px;
+    width: 100%;
+    color: var(--ink);
+  }
+
+  .tag-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .tag-chip {
+    font-size: 12px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .tag-chip.active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+
+  .new-note-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    padding: 9px 10px;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    border-radius: 9px;
+    font-size: 13.5px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: 4px;
+  }
+
+  .new-note-btn:hover { background: #1c1b19; }
+
+  .note-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 10px 16px;
+  }
+
+  .list-subhead {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 10px 8px 6px;
+  }
+
+  .note-item {
+    padding: 11px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .note-item:hover { background: var(--paper); }
+  .note-item.active { background: var(--accent-soft); }
+
+  .note-item-body { flex: 1; min-width: 0; }
+
+  .note-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+
+  .note-title {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .note-meta {
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .note-preview {
+    font-size: 12.5px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    margin-top: 2px;
+  }
+
+  .note-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #cfd9c9, #8fae8a);
+    flex-shrink: 0;
+  }
+
+  .pin-icon { color: var(--pin); font-size: 12px; }
+
+  /* ---------- DETAIL ---------- */
+  .detail-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--card);
+  }
+
+  .detail-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .toolbar-group { display: flex; gap: 14px; align-items: center; color: var(--muted); }
+  .toolbar-btn {
+    cursor: pointer;
+    font-size: 13px;
+    padding: 6px 9px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .toolbar-btn:hover { background: var(--paper); }
+  .toolbar-btn.pinned { color: var(--pin); }
+  .toolbar-btn.danger:hover { color: var(--danger); }
+
+  .detail-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 28px 48px 60px;
+    max-width: 720px;
+  }
+
+  .detail-title {
+    font-size: 26px;
+    font-weight: 700;
+    border: none;
+    outline: none;
+    width: 100%;
+    margin-bottom: 4px;
+    font-family: inherit;
+    color: var(--ink);
+  }
+
+  .detail-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+
+  .meta-tag {
+    font-size: 11.5px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+
+  .meta-date { font-size: 12px; color: var(--muted); }
+
+  .block-text {
+    font-size: 15px;
+    line-height: 1.65;
+    margin-bottom: 18px;
+    color: var(--ink);
+  }
+
+  .block-image {
+    width: 100%;
+    max-width: 420px;
+    border-radius: 12px;
+    margin-bottom: 18px;
+    display: block;
+  }
+
+  .checklist { margin-bottom: 18px; }
+
+  .check-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 6px 0;
+    cursor: pointer;
+  }
+
+  .check-box {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    border: 1.5px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .check-item.done .check-box {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--paper);
+    font-size: 12px;
+  }
+
+  .check-item.done .check-label {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+
+  .check-label { font-size: 15px; }
+
+  .add-item-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 6px 0;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .add-item-row .check-box {
+    border-style: dashed;
+  }
+
+  .block-toolbar {
+    display: flex;
+    gap: 4px;
+    padding: 10px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .block-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .block-btn:hover { background: var(--paper); color: var(--ink); }
+  .block-divider { width: 1px; background: var(--border); margin: 4px 6px; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-item active">
+        <div class="left">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>
+          Todas las notas
+        </div>
+        <span class="count">24</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20l9-16H3l9 16z"/><path d="M12 4v0"/></svg>
+          Fijadas
+        </div>
+        <span class="count">2</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          Papelera
+        </div>
+        <span class="count">2</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Etiquetas</div>
+      <div class="sidebar-item">
+        <div class="left"><span class="dot" style="background:#B4553F"></span>Importante</div>
+        <span class="count">4</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left"><span class="dot" style="background:#C98A3D"></span>Casa</div>
+        <span class="count">3</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left"><span class="dot" style="background:#3F6E64"></span>Proyecto</div>
+        <span class="count">5</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left"><span class="dot" style="background:#5B7DB1"></span>Personal</div>
+        <span class="count">7</span>
+      </div>
+      <div class="sidebar-item">
+        <div class="left"><span class="dot" style="background:#8A8478"></span>Sin etiqueta</div>
+        <span class="count">3</span>
+      </div>
+    </div>
+
+    <div class="new-folder">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Nueva etiqueta
+    </div>
+  </div>
+
+  <!-- ================= LIST ================= -->
+  <div class="list-pane">
+    <div class="list-header">
+      <h1>Todas las notas</h1>
+      <div class="search-box">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" placeholder="Buscar en tus notas" />
+      </div>
+      <button class="new-note-btn">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;opacity:1;"><path d="M12 5v14M5 12h14"/></svg>
+        Nueva nota
+      </button>
+    </div>
+
+    <div class="note-list">
+      <div class="list-subhead">Fijadas</div>
+
+      <div class="note-item active">
+        <div class="note-item-body">
+          <div class="note-title-row">
+            <span class="pin-icon">📌</span>
+            <span class="note-title">Compra semanal</span>
+          </div>
+          <div class="note-preview">☑ Leche de avena · ☐ Tomates · ☐ Café molido</div>
+          <div class="note-meta"><span>Hoy, 09:12</span><span>·</span><span>Casa</span></div>
+        </div>
+      </div>
+
+      <div class="note-item">
+        <div class="note-item-body">
+          <div class="note-title-row">
+            <span class="pin-icon">📌</span>
+            <span class="note-title">Arquitectura app notas</span>
+          </div>
+          <div class="note-preview">Guardar en Drive, un JSON por nota. Offline-first con IndexedDB.</div>
+          <div class="note-meta"><span>Ayer, 21:40</span><span>·</span><span>Proyecto</span></div>
+        </div>
+      </div>
+
+      <div class="list-subhead">Otras</div>
+
+      <div class="note-item">
+        <div class="note-item-body">
+          <div class="note-title-row"><span class="note-title">Ideas para el finde</span></div>
+          <div class="note-preview">Ruta por el monte, llevar la cámara buena. Mirar previsión del viernes.</div>
+          <div class="note-meta"><span>Lun, 18:03</span><span>·</span><span>Personal</span></div>
+        </div>
+        <div class="note-thumb"></div>
+      </div>
+
+      <div class="note-item">
+        <div class="note-item-body">
+          <div class="note-title-row"><span class="note-title">Libros pendientes</span></div>
+          <div class="note-preview">☐ Klara y el sol · ☐ El nombre del viento</div>
+          <div class="note-meta"><span>12 sept</span><span>·</span><span>Personal</span></div>
+        </div>
+      </div>
+
+      <div class="note-item">
+        <div class="note-item-body">
+          <div class="note-title-row"><span class="note-title">Notas reunión proyecto</span></div>
+          <div class="note-preview">Revisión de calendario. Próximos pasos: cerrar diseño de datos.</div>
+          <div class="note-meta"><span>6 sept</span><span>·</span><span>Proyecto</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= DETAIL ================= -->
+  <div class="detail-pane">
+    <div class="detail-toolbar">
+      <div class="toolbar-group">
+        <span class="toolbar-btn pinned">📌 Fijada</span>
+      </div>
+      <div class="toolbar-group">
+        <span class="toolbar-btn">🏷️ Etiqueta</span>
+        <span class="toolbar-btn danger">🗑️ Eliminar</span>
+      </div>
+    </div>
+
+    <div class="block-toolbar">
+      <span class="block-btn" style="font-weight:700;">B</span>
+      <div class="block-divider"></div>
+      <span class="block-btn">🔤 Texto</span>
+      <span class="block-btn">🔠 Encabezado</span>
+      <span class="block-btn">☑ Lista</span>
+      <div class="block-divider"></div>
+      <span class="block-btn">🖼️ Imagen</span>
+    </div>
+
+    <div class="detail-content">
+      <input class="detail-title" value="Compra semanal" />
+      <div class="detail-meta">
+        <span class="meta-tag">Casa</span>
+        <span class="meta-date">Editada hoy a las 09:12</span>
+      </div>
+
+      <div class="checklist">
+        <div class="check-item done">
+          <div class="check-box">✓</div>
+          <span class="check-label">Leche de avena</span>
+        </div>
+        <div class="check-item">
+          <div class="check-box"></div>
+          <span class="check-label">Tomates</span>
+        </div>
+        <div class="check-item">
+          <div class="check-box"></div>
+          <span class="check-label">Café molido</span>
+        </div>
+        <div class="check-item done">
+          <div class="check-box">✓</div>
+          <span class="check-label">Detergente</span>
+        </div>
+        <div class="check-item">
+          <div class="check-box"></div>
+          <span class="check-label">Pan de molde</span>
+        </div>
+        <div class="add-item-row">
+          <div class="check-box"></div>
+          <span>Añadir elemento</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Interacciones mínimas solo para que se vea la idea al abrir el archivo
+  document.querySelectorAll('.note-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.note-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
+
+  document.querySelectorAll('.check-item').forEach(item => {
+    item.addEventListener('click', () => item.classList.toggle('done'));
+  });
+
+  document.querySelector('.new-note-btn').addEventListener('click', () => {
+    document.querySelector('.detail-title').value = 'Nueva nota';
+    document.querySelector('.detail-title').focus();
+  });
+
+  document.querySelectorAll('.block-btn').forEach(btn => {
+    btn.addEventListener('click', () => btn.classList.toggle('active'));
+  });
+
+  document.querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.tag-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>
