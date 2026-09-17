@@ -1,0 +1,18 @@
+{
+  "name": "Notas — App Personal",
+  "short_name": "Notas",
+  "description": "App de notas personal offline-first con sincronización en Google Drive",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F4EE",
+  "theme_color": "#F7F4EE",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/ico-notas.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
