@@ -17,12 +17,14 @@ import {
   runFullSync,
   SyncState,
 } from './services/syncEngine';
-import { ArrowLeft, Menu } from 'lucide-react';
+import { PreferencesModal } from './components/PreferencesModal';
+import { ArrowLeft, Menu, Settings } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [currentFilter, setCurrentFilter] = useState<SidebarFilter>({ type: 'all' });
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
 
   // Estados de autenticación y sincronización con Google Drive
   const [token, setToken] = useState<string | null>(null);
@@ -52,8 +54,10 @@ export const App: React.FC = () => {
     if (session) {
       setToken(session.token);
       if (session.profile) setUserProfile(session.profile);
-      // Sincronizar en segundo plano
-      runFullSync(session.token);
+      // Sincronizar en segundo plano si el token está activo
+      if (session.token) {
+        runFullSync(session.token);
+      }
     }
 
     // Inicializar cliente de Google
@@ -174,6 +178,7 @@ export const App: React.FC = () => {
           onConnectGoogle={handleConnectGoogle}
           onLogoutGoogle={handleLogoutGoogle}
           token={token}
+          onOpenPreferences={() => setIsPreferencesOpen(true)}
         />
       </div>
 
@@ -192,18 +197,26 @@ export const App: React.FC = () => {
         }`}
       >
         <div className="w-full flex flex-col h-full">
-          {/* Barra superior en móvil para abrir menú */}
+          {/* Barra superior en móvil para abrir menú y ajustes */}
           <div className="md:hidden p-3 border-b border-[#E4DECE] bg-[#EDEAE2] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsMobileSidebarOpen(true)}
-                className="p-1.5 rounded-lg bg-white border border-[#E4DECE] text-[#2B2A28]"
+                className="p-1.5 rounded-lg bg-white border border-[#E4DECE] text-[#2B2A28] cursor-pointer"
+                title="Menú"
               >
                 <Menu className="w-4 h-4" />
               </button>
               <span className="font-semibold text-xs">Mis Notas</span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[#8A8478]">
+              <button
+                onClick={() => setIsPreferencesOpen(true)}
+                className="p-1.5 rounded-lg bg-white border border-[#E4DECE] text-[#3F6E64] hover:text-[#2B2A28] flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                title="Preferencias y Google Drive"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
               <a href="/privacidad.html" target="_blank" rel="noopener noreferrer" className="hover:underline">
                 Privacidad
               </a>
@@ -258,6 +271,19 @@ export const App: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Modal de Preferencias y Google Drive */}
+      <PreferencesModal
+        isOpen={isPreferencesOpen}
+        onClose={() => setIsPreferencesOpen(false)}
+        token={token}
+        userProfile={userProfile}
+        syncState={syncState}
+        syncMessage={syncMessage}
+        onConnectGoogle={handleConnectGoogle}
+        onLogoutGoogle={handleLogoutGoogle}
+        onTriggerSync={handleTriggerSync}
+      />
     </div>
   );
 };

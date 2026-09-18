@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ShieldCheck,
   ExternalLink,
+  Settings,
 } from 'lucide-react';
 
 export type SidebarFilter =
@@ -34,6 +35,7 @@ interface SidebarProps {
   onConnectGoogle: () => void;
   onLogoutGoogle: () => void;
   token: string | null;
+  onOpenPreferences: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -46,6 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onConnectGoogle,
   onLogoutGoogle,
   token,
+  onOpenPreferences,
 }) => {
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
@@ -128,6 +131,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
             <div className="absolute left-3 right-3 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-50">
               <div className="px-2 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1">
+                Configuración
+              </div>
+              <button
+                onClick={() => {
+                  setIsLogoMenuOpen(false);
+                  onOpenPreferences();
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Settings className="w-3.5 h-3.5 text-[#3F6E64]" />
+                  <span className="font-medium">Preferencias y Drive</span>
+                </div>
+              </button>
+
+              <div className="px-2 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 my-1">
                 Información legal
               </div>
               <a
@@ -373,7 +392,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* User Account / Login button */}
         {token ? (
           <div className="flex items-center justify-between px-2 py-1 text-xs">
-            <div className="flex items-center gap-2 min-w-0">
+            <div
+              onClick={onOpenPreferences}
+              className="flex items-center gap-2 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
+              title="Abrir preferencias"
+            >
               {userProfile?.picture ? (
                 <img
                   src={userProfile.picture}
@@ -385,26 +408,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ✓
                 </div>
               )}
-              <span className="text-[11px] text-[#8A8478] truncate max-w-[120px]">
+              <span className="text-[11px] text-[#8A8478] truncate max-w-[100px]">
                 {userProfile?.email || 'Google Drive'}
               </span>
             </div>
-            <button
-              onClick={onLogoutGoogle}
-              className="text-[#8A8478] hover:text-[#B4553F] p-1 transition-colors"
-              title="Desconectar Google Drive"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={onOpenPreferences}
+                className="text-[#8A8478] hover:text-[#2B2A28] p-1 transition-colors cursor-pointer"
+                title="Preferencias"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={onLogoutGoogle}
+                className="text-[#8A8478] hover:text-[#B4553F] p-1 transition-colors cursor-pointer"
+                title="Desconectar Google Drive"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            onClick={onConnectGoogle}
-            className="w-full py-1.5 px-2 bg-[#2B2A28] hover:bg-black text-[#F7F4EE] text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-          >
-            <Cloud className="w-3.5 h-3.5 text-[#F7F4EE]" />
-            <span>Conectar Google Drive</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onConnectGoogle}
+              className="flex-1 py-1.5 px-2 bg-[#2B2A28] hover:bg-black text-[#F7F4EE] text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            >
+              <Cloud className="w-3.5 h-3.5 text-[#F7F4EE]" />
+              <span>Conectar Google Drive</span>
+            </button>
+            <button
+              onClick={onOpenPreferences}
+              className="p-1.5 text-[#8A8478] hover:text-[#2B2A28] bg-white/60 hover:bg-white border border-[#E4DECE] rounded-lg transition-colors cursor-pointer"
+              title="Preferencias"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
       </div>
     </aside>

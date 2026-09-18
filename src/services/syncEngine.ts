@@ -5,6 +5,8 @@ import {
   listFilesInFolder,
   readJsonFile,
 } from './googleDrive';
+import { getSettings } from './settings';
+import { silentRefreshToken } from './googleAuth';
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 
@@ -16,6 +18,10 @@ const listeners = new Set<SyncListener>();
 
 let cachedNotesFolderId: string | null = null;
 let syncTimeout: number | null = null;
+
+export function resetCachedFolderId(): void {
+  cachedNotesFolderId = null;
+}
 
 export function subscribeSyncState(listener: SyncListener): () => void {
   listeners.add(listener);
@@ -32,12 +38,13 @@ function notifyState(state: SyncState, message = '') {
 }
 
 /**
- * Obtiene o crea la carpeta /MiAppNotas/notes/ en Drive
+ * Obtiene o crea la carpeta /[driveFolderName]/notes/ en Drive
  */
 async function getNotesFolderId(token: string): Promise<string> {
   if (cachedNotesFolderId) return cachedNotesFolderId;
 
-  const root = await findOrCreateFolder(token, 'MiAppNotas');
+  const folderName = getSettings().driveFolderName || 'MiAppNotas';
+  const root = await findOrCreateFolder(token, folderName);
   const notes = await findOrCreateFolder(token, 'notes', root.id);
   cachedNotesFolderId = notes.id;
   return notes.id;
@@ -110,8 +117,12 @@ export async function syncPendingNotes(token: string): Promise<void> {
     }
 
     notifyState('idle', 'Sincronizado');
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error al sincronizar notas pendientes:', err);
+    const errStr = String(err);
+    if (errStr.includes('401')) {
+      silentRefreshToken();
+    }
     notifyState('error', 'Error al sincronizar con Google Drive');
   }
 }
@@ -162,8 +173,12 @@ export async function pullRemoteNotes(token: string): Promise<void> {
     }
 
     notifyState('idle', 'Sincronizado');
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error al descargar notas remotas:', err);
+    const errStr = String(err);
+    if (errStr.includes('401')) {
+      silentRefreshToken();
+    }
     notifyState('error', 'Error al consultar Drive');
   }
 }
@@ -181,6 +196,7 @@ export async function runFullSync(token: string): Promise<void> {
  */
 export function scheduleSync(token: string | null): void {
   if (!token) return;
+  if (!getSettings().autoSync) return;
 
   if (syncTimeout) {
     window.clearTimeout(syncTimeout);
