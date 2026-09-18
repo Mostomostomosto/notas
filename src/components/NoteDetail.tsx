@@ -1,6 +1,6 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, NoteBlock, ChecklistItem, Tag } from '../db/db';
+import { db, Note, NoteBlock, ChecklistItem, ChecklistBlock, Tag } from '../db/db';
 import { scheduleSync } from '../services/syncEngine';
 import {
   Pin,
@@ -24,7 +24,25 @@ interface NoteDetailProps {
 
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const itemInputsRef = useRef<Map<string, HTMLInputElement>>(new Map());
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
+
+  // Efecto para enfocar automáticamente el nuevo elemento de checklist o bloque
+  useEffect(() => {
+    if (focusItemId) {
+      const timer = setTimeout(() => {
+        const el = itemInputsRef.current.get(focusItemId);
+        if (el) {
+          el.focus();
+          const len = el.value.length;
+          el.setSelectionRange(len, len);
+        }
+        setFocusItemId(null);
+      }, 20);
+      return () => clearTimeout(timer);
+    }
+  }, [focusItemId, note?.blocks]);
 
   if (!note) {
     return (
@@ -90,11 +108,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (type === 'heading') {
       newBlock = { id: newBlockId, type: 'heading', content: '' };
     } else if (type === 'checklist') {
+      const newCheckId = `c_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       newBlock = {
         id: newBlockId,
         type: 'checklist',
-        items: [{ id: `c_${Date.now()}`, text: '', checked: false }],
+        items: [{ id: newCheckId, text: '', checked: false }],
       };
+      setFocusItemId(newCheckId);
     } else {
       newBlock = { id: newBlockId, type: 'text', content: '' };
     }
@@ -149,10 +169,11 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleAddCheckItem = (blockId: string, afterIndex?: number) => {
+    const newId = `c_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const updatedBlocks = note.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItem: ChecklistItem = {
-          id: `c_${Date.now()}_${Math.random()}`,
+          id: newId,
           text: '',
           checked: false,
         };
@@ -166,10 +187,21 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
       return b;
     });
+    setFocusItemId(newId);
     saveChanges({ blocks: updatedBlocks });
   };
 
   const handleDeleteCheckItem = (blockId: string, itemIndex: number) => {
+    const targetBlock = note.blocks.find(
+      (b) => b.id === blockId && b.type === 'checklist'
+    ) as ChecklistBlock | undefined;
+
+    if (targetBlock && itemIndex > 0) {
+      const prevItem = targetBlock.items[itemIndex - 1];
+      const prevId = prevItem?.id || `${blockId}_${itemIndex - 1}`;
+      setFocusItemId(prevId);
+    }
+
     const updatedBlocks = note.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = b.items.filter((_, idx) => idx !== itemIndex);
@@ -411,60 +443,70 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               {/* Checklist block */}
               {block.type === 'checklist' && (
                 <div className="space-y-1.5">
-                  {block.items.map((item, idx) => (
-                    <div key={item.id || idx} className="flex items-center gap-2 group/item">
-                      <button
-                        type="button"
-                        disabled={note.deleted}
-                        onClick={() => handleToggleCheckItem(block.id, idx)}
-                        className={`w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0 cursor-pointer ${
-                          item.checked
-                            ? 'bg-[#3F6E64] border-[#3F6E64] text-white'
-                            : 'border-[#8A8478] hover:border-[#2B2A28] bg-white'
-                        }`}
-                      >
-                        {item.checked && <Check className="w-3 h-3 stroke-[3]" />}
-                      </button>
-
-                      <input
-                        type="text"
-                        value={item.text}
-                        disabled={note.deleted}
-                        onChange={(e) =>
-                          handleUpdateCheckItemText(block.id, idx, e.target.value)
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddCheckItem(block.id, idx);
-                          } else if (
-                            e.key === 'Backspace' &&
-                            !item.text &&
-                            block.items.length > 1
-                          ) {
-                            e.preventDefault();
-                            handleDeleteCheckItem(block.id, idx);
-                          }
-                        }}
-                        placeholder="Elemento de lista..."
-                        className={`w-full text-sm outline-none bg-transparent ${
-                          item.checked
-                            ? 'line-through text-[#8A8478]'
-                            : 'text-[#2B2A28]'
-                        }`}
-                      />
-
-                      {!note.deleted && block.items.length > 1 && (
+                  {block.items.map((item, idx) => {
+                    const itemId = item.id || `${block.id}_${idx}`;
+                    return (
+                      <div key={itemId} className="flex items-center gap-2 group/item">
                         <button
                           type="button"
-                          onClick={() => handleDeleteCheckItem(block.id, idx)}
-                          className="opacity-0 group-hover/item:opacity-100 text-[#8A8478] hover:text-[#B4553F] p-0.5"
+                          disabled={note.deleted}
+                          onClick={() => handleToggleCheckItem(block.id, idx)}
+                          className={`w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0 cursor-pointer ${
+                            item.checked
+                              ? 'bg-[#3F6E64] border-[#3F6E64] text-white'
+                              : 'border-[#8A8478] hover:border-[#2B2A28] bg-white'
+                          }`}
                         >
-                          <X className="w-3 h-3" />
+                          {item.checked && <Check className="w-3 h-3 stroke-[3]" />}
                         </button>
-                      )}
-                    </div>
-                  ))}
+
+                        <input
+                          ref={(el) => {
+                            if (el) {
+                              itemInputsRef.current.set(itemId, el);
+                            } else {
+                              itemInputsRef.current.delete(itemId);
+                            }
+                          }}
+                          type="text"
+                          value={item.text}
+                          disabled={note.deleted}
+                          onChange={(e) =>
+                            handleUpdateCheckItemText(block.id, idx, e.target.value)
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.keyCode === 13) {
+                              e.preventDefault();
+                              handleAddCheckItem(block.id, idx);
+                            } else if (
+                              e.key === 'Backspace' &&
+                              !item.text &&
+                              block.items.length > 1
+                            ) {
+                              e.preventDefault();
+                              handleDeleteCheckItem(block.id, idx);
+                            }
+                          }}
+                          placeholder="Elemento de lista..."
+                          className={`w-full text-sm outline-none bg-transparent ${
+                            item.checked
+                              ? 'line-through text-[#8A8478]'
+                              : 'text-[#2B2A28]'
+                          }`}
+                        />
+
+                        {!note.deleted && block.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCheckItem(block.id, idx)}
+                            className="opacity-0 group-hover/item:opacity-100 text-[#8A8478] hover:text-[#B4553F] p-0.5"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
 
                   {!note.deleted && (
                     <button
