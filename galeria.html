@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Galería de imágenes</title>
+  <title>Galería de imágenes — Proyecto</title>
   <link rel="icon" type="image/png" href="/ico-notas.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,7 +17,6 @@
       --muted: #8A8478;
       --border: #E4DECE;
       --accent: #3F6E64;
-      --accent-soft: #E4EEEC;
     }
 
     * { box-sizing: border-box; }
@@ -41,7 +40,7 @@
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 24px 28px;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -81,6 +80,42 @@
       background: #111;
     }
 
+    /* Bloque de texto con todas las URLs legible para bots/IA */
+    .links-summary {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px 24px;
+      margin-bottom: 28px;
+    }
+
+    .links-summary h2 {
+      font-size: 14px;
+      margin: 0 0 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .links-summary ul {
+      margin: 0;
+      padding-left: 20px;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .links-summary a {
+      color: var(--accent);
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .links-summary a:hover {
+      text-decoration: underline;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -93,7 +128,7 @@
       border-radius: 16px;
       overflow: hidden;
       display: flex;
-      flex-col: column;
+      flex-direction: column;
       box-shadow: 0 2px 8px rgba(0,0,0,0.02);
       transition: transform 0.15s, box-shadow 0.15s;
     }
@@ -110,7 +145,6 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      position: relative;
     }
 
     .image-wrap img {
@@ -220,38 +254,185 @@
   <header>
     <div class="title-group">
       <h1>Galería de imágenes</h1>
-      <p>Imágenes públicas listas para compartir y enlazar</p>
+      <p>8 imágenes disponibles para consultar y enlazar</p>
     </div>
     <button class="copy-all-btn" onclick="copyAllUrls()">
       📋 Copiar todas las URLs
     </button>
   </header>
 
-  <div class="grid" id="gallery-grid"></div>
+  <!-- Lista de enlaces en texto estático puro para que Claude o cualquier lector pueda leerlos directamente -->
+  <section class="links-summary">
+    <h2>Índice de imágenes y enlaces directos</h2>
+    <ul>
+      <li>
+        <strong>bsmnt1_main.png:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/bsmnt1_main.png" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/bsmnt1_main.png</a>
+      </li>
+      <li>
+        <strong>bsmnt2_main.png:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_main.png" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_main.png</a>
+      </li>
+      <li>
+        <strong>bsmnt2_table.png:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_table.png" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_table.png</a>
+      </li>
+      <li>
+        <strong>lower.png:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/lower.png" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/lower.png</a>
+      </li>
+      <li>
+        <strong>sotano_01.jpg:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/sotano_01.jpg" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/sotano_01.jpg</a>
+      </li>
+      <li>
+        <strong>sotano_02.jpg:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/sotano_02.jpg" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/sotano_02.jpg</a>
+      </li>
+      <li>
+        <strong>sotano_03.jpg:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/sotano_03.jpg" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/sotano_03.jpg</a>
+      </li>
+      <li>
+        <strong>stairs.png:</strong>
+        <a href="https://notas-theta-sandy.vercel.app/ajeno/stairs.png" target="_blank">https://notas-theta-sandy.vercel.app/ajeno/stairs.png</a>
+      </li>
+    </ul>
+  </section>
+
+  <!-- Cuadrícula estática con etiquetas img reales -->
+  <div class="grid">
+    <!-- 1. bsmnt1_main.png -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/bsmnt1_main.png" alt="bsmnt1_main.png" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">bsmnt1_main.png</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/bsmnt1_main.png" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/bsmnt1_main.png')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/bsmnt1_main.png" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 2. bsmnt2_main.png -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/bsmnt2_main.png" alt="bsmnt2_main.png" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">bsmnt2_main.png</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_main.png" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_main.png')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/bsmnt2_main.png" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 3. bsmnt2_table.png -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/bsmnt2_table.png" alt="bsmnt2_table.png" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">bsmnt2_table.png</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_table.png" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_table.png')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/bsmnt2_table.png" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 4. lower.png -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/lower.png" alt="lower.png" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">lower.png</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/lower.png" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/lower.png')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/lower.png" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 5. sotano_01.jpg -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/sotano_01.jpg" alt="sotano_01.jpg" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">sotano_01.jpg</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/sotano_01.jpg" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/sotano_01.jpg')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/sotano_01.jpg" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 6. sotano_02.jpg -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/sotano_02.jpg" alt="sotano_02.jpg" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">sotano_02.jpg</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/sotano_02.jpg" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/sotano_02.jpg')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/sotano_02.jpg" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 7. sotano_03.jpg -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/sotano_03.jpg" alt="sotano_03.jpg" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">sotano_03.jpg</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/sotano_03.jpg" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/sotano_03.jpg')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/sotano_03.jpg" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+
+    <!-- 8. stairs.png -->
+    <div class="card">
+      <div class="image-wrap">
+        <img src="/ajeno/stairs.png" alt="stairs.png" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">stairs.png</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="https://notas-theta-sandy.vercel.app/ajeno/stairs.png" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('https://notas-theta-sandy.vercel.app/ajeno/stairs.png')">Copiar</button>
+        </div>
+        <a class="btn" href="/ajeno/stairs.png" target="_blank" rel="noopener noreferrer">Ver original ↗</a>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast">URL copiada al portapapeles</div>
 
 <script>
-  const images = [
-    { name: 'bsmnt2_main.png', file: '/ajeno/bsmnt2_main.png' },
-    { name: 'bsmnt2_table.png', file: '/ajeno/bsmnt2_table.png' },
-    { name: 'lower.png', file: '/ajeno/lower.png' },
-    { name: 'main.png', file: '/ajeno/main.png' },
-    { name: 'stairs.png', file: '/ajeno/stairs.png' }
-  ];
-
-  const grid = document.getElementById('gallery-grid');
   const toast = document.getElementById('toast');
 
   function showToast(text) {
     toast.textContent = text;
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);
-  }
-
-  function getAbsoluteUrl(relativePath) {
-    return window.location.origin + relativePath;
   }
 
   function copyUrl(url) {
@@ -261,35 +442,21 @@
   }
 
   function copyAllUrls() {
-    const text = images.map(img => `${img.name}: ${getAbsoluteUrl(img.file)}`).join('\n');
-    navigator.clipboard.writeText(text).then(() => {
+    const list = [
+      'bsmnt1_main.png: https://notas-theta-sandy.vercel.app/ajeno/bsmnt1_main.png',
+      'bsmnt2_main.png: https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_main.png',
+      'bsmnt2_table.png: https://notas-theta-sandy.vercel.app/ajeno/bsmnt2_table.png',
+      'lower.png: https://notas-theta-sandy.vercel.app/ajeno/lower.png',
+      'sotano_01.jpg: https://notas-theta-sandy.vercel.app/ajeno/sotano_01.jpg',
+      'sotano_02.jpg: https://notas-theta-sandy.vercel.app/ajeno/sotano_02.jpg',
+      'sotano_03.jpg: https://notas-theta-sandy.vercel.app/ajeno/sotano_03.jpg',
+      'stairs.png: https://notas-theta-sandy.vercel.app/ajeno/stairs.png'
+    ].join('\n');
+
+    navigator.clipboard.writeText(list).then(() => {
       showToast('✓ Todas las URLs copiadas');
     });
   }
-
-  // Renderizar tarjetas
-  images.forEach(img => {
-    const fullUrl = getAbsoluteUrl(img.file);
-
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="image-wrap">
-        <img src="${img.file}" alt="${img.name}" loading="lazy" />
-      </div>
-      <div class="card-body">
-        <h3 class="file-name">${img.name}</h3>
-        <div class="url-row">
-          <input class="url-input" type="text" readonly value="${fullUrl}" onclick="this.select()" />
-          <button class="btn btn-primary" onclick="copyUrl('${fullUrl}')">Copiar</button>
-        </div>
-        <a class="btn" href="${img.file}" target="_blank" rel="noopener noreferrer">
-          Ver original ↗
-        </a>
-      </div>
-    `;
-    grid.appendChild(card);
-  });
 </script>
 
 </body>
