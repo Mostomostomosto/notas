@@ -258,6 +258,7 @@ export const App: React.FC = () => {
 
         <div className="flex-1 min-h-0">
           <NoteDetail
+            key={activeNote?.id || 'empty'}
             note={activeNote}
             token={token}
             onNoteDeleted={() => {

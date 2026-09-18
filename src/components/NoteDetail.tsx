@@ -28,7 +28,82 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
 
-  // Efecto para enfocar automáticamente el nuevo elemento de checklist o bloque
+  // Estado local sincronizado para garantizar que la edición y la posición del cursor no salten
+  const [localNote, setLocalNote] = useState<Note | null>(note);
+  const pendingSaveRef = useRef<Note | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
+
+  // Sincronizar si cambia la nota seleccionada o si llega una actualización externa
+  useEffect(() => {
+    if (note) {
+      if (!localNote || note.id !== localNote.id || (!pendingSaveRef.current && note.updatedAt !== localNote.updatedAt)) {
+        setLocalNote(note);
+      }
+    } else {
+      setLocalNote(null);
+    }
+  }, [note]);
+
+  // Guardar inmediatamente cualquier cambio pendiente al desmontar o cambiar de nota
+  const flushSave = () => {
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (pendingSaveRef.current) {
+      const toSave = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      db.notes.update(toSave.id, {
+        title: toSave.title,
+        tag: toSave.tag,
+        pinned: toSave.pinned,
+        deleted: toSave.deleted,
+        blocks: toSave.blocks,
+        updatedAt: toSave.updatedAt,
+        syncStatus: 'pending',
+      });
+      scheduleSync(token);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      flushSave();
+    };
+  }, []);
+
+  // Guardado con debounce para eventos de tecleo continuo (evita recargas que alteren el cursor)
+  const saveChangesDebounced = (updatedNote: Note) => {
+    pendingSaveRef.current = updatedNote;
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = window.setTimeout(() => {
+      flushSave();
+    }, 300);
+  };
+
+  // Guardado inmediato para acciones explícitas (añadir elemento, marcar casilla, fijar, etc.)
+  const saveChangesImmediate = async (updatedNote: Note) => {
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    pendingSaveRef.current = null;
+    setLocalNote(updatedNote);
+    await db.notes.update(updatedNote.id, {
+      title: updatedNote.title,
+      tag: updatedNote.tag,
+      pinned: updatedNote.pinned,
+      deleted: updatedNote.deleted,
+      blocks: updatedNote.blocks,
+      updatedAt: updatedNote.updatedAt,
+      syncStatus: 'pending',
+    });
+    scheduleSync(token);
+  };
+
+  // Efecto para enfocar automáticamente solo cuando se crea un nuevo elemento de checklist
   useEffect(() => {
     if (focusItemId) {
       const timer = setTimeout(() => {
@@ -39,12 +114,12 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           el.setSelectionRange(len, len);
         }
         setFocusItemId(null);
-      }, 20);
+      }, 30);
       return () => clearTimeout(timer);
     }
-  }, [focusItemId, note?.blocks]);
+  }, [focusItemId]);
 
-  if (!note) {
+  if (!localNote) {
     return (
       <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 text-[#8A8478]">
         <div className="w-16 h-16 rounded-2xl bg-[#F7F4EE] border border-[#E4DECE] flex items-center justify-center mb-4 text-[#8A8478]">
@@ -56,33 +131,36 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     );
   }
 
-  // Guardar cambios en Dexie y encolar sincronización
-  const saveChanges = async (updatedFields: Partial<Note>) => {
-    const updatedNote: Partial<Note> = {
-      ...updatedFields,
-      updatedAt: new Date().toISOString(),
-      syncStatus: 'pending',
-    };
-    await db.notes.update(note.id, updatedNote);
-    scheduleSync(token);
-  };
-
   // Toggle fijar / desfijar
-  const handleTogglePin = async () => {
-    await saveChanges({ pinned: !note.pinned });
+  const handleTogglePin = () => {
+    const updated: Note = {
+      ...localNote,
+      pinned: !localNote.pinned,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   // Cambiar etiqueta
-  const handleSelectTag = async (tagName: string) => {
-    await saveChanges({ tag: tagName });
+  const handleSelectTag = (tagName: string) => {
+    const updated: Note = {
+      ...localNote,
+      tag: tagName,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   // Mover a papelera o restaurar
   const handleToggleDelete = async () => {
-    if (note.deleted) {
-      await saveChanges({ deleted: false });
-    } else {
-      await saveChanges({ deleted: true });
+    const isDeleting = !localNote.deleted;
+    const updated: Note = {
+      ...localNote,
+      deleted: isDeleting,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveChangesImmediate(updated);
+    if (isDeleting) {
       onNoteDeleted?.();
     }
   };
@@ -90,14 +168,24 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   // Eliminar definitivamente
   const handlePermanentDelete = async () => {
     if (window.confirm('¿Seguro que deseas eliminar definitivamente esta nota?')) {
-      await db.notes.delete(note.id);
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+      pendingSaveRef.current = null;
+      await db.notes.delete(localNote.id);
       onNoteDeleted?.();
     }
   };
 
-  // Cambiar título
+  // Cambiar título (actualización síncrona en localNote para mantener el cursor en su sitio)
   const handleTitleChange = (newTitle: string) => {
-    saveChanges({ title: newTitle });
+    const updated: Note = {
+      ...localNote,
+      title: newTitle,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
   };
 
   // Manipulación de bloques
@@ -119,26 +207,42 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       newBlock = { id: newBlockId, type: 'text', content: '' };
     }
 
-    saveChanges({ blocks: [...note.blocks, newBlock] });
+    const updated: Note = {
+      ...localNote,
+      blocks: [...localNote.blocks, newBlock],
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   const handleUpdateBlockContent = (blockId: string, newContent: string) => {
-    const updatedBlocks = note.blocks.map((b) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && (b.type === 'heading' || b.type === 'text')) {
         return { ...b, content: newContent };
       }
       return b;
     });
-    saveChanges({ blocks: updatedBlocks });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
   };
 
   const handleDeleteBlock = (blockId: string) => {
-    saveChanges({ blocks: note.blocks.filter((b) => b.id !== blockId) });
+    const updated: Note = {
+      ...localNote,
+      blocks: localNote.blocks.filter((b) => b.id !== blockId),
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   // Manipulación de items de checklist
   const handleToggleCheckItem = (blockId: string, itemIndex: number) => {
-    const updatedBlocks = note.blocks.map((b) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = [...b.items];
         newItems[itemIndex] = {
@@ -149,7 +253,12 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
       return b;
     });
-    saveChanges({ blocks: updatedBlocks });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   const handleUpdateCheckItemText = (
@@ -157,7 +266,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     itemIndex: number,
     newText: string
   ) => {
-    const updatedBlocks = note.blocks.map((b) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = [...b.items];
         newItems[itemIndex] = { ...newItems[itemIndex], text: newText };
@@ -165,12 +274,18 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
       return b;
     });
-    saveChanges({ blocks: updatedBlocks });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
   };
 
   const handleAddCheckItem = (blockId: string, afterIndex?: number) => {
     const newId = `c_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const updatedBlocks = note.blocks.map((b) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItem: ChecklistItem = {
           id: newId,
@@ -187,12 +302,17 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
       return b;
     });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
     setFocusItemId(newId);
-    saveChanges({ blocks: updatedBlocks });
+    saveChangesImmediate(updated);
   };
 
   const handleDeleteCheckItem = (blockId: string, itemIndex: number) => {
-    const targetBlock = note.blocks.find(
+    const targetBlock = localNote.blocks.find(
       (b) => b.id === blockId && b.type === 'checklist'
     ) as ChecklistBlock | undefined;
 
@@ -202,14 +322,19 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       setFocusItemId(prevId);
     }
 
-    const updatedBlocks = note.blocks.map((b) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = b.items.filter((_, idx) => idx !== itemIndex);
         return { ...b, items: newItems };
       }
       return b;
     });
-    saveChanges({ blocks: updatedBlocks });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
   };
 
   // Subir imagen local
@@ -226,20 +351,41 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
         localUrl,
         caption: file.name,
       };
-      saveChanges({ blocks: [...note.blocks, newBlock] });
+      const updated: Note = {
+        ...localNote,
+        blocks: [...localNote.blocks, newBlock],
+        updatedAt: new Date().toISOString(),
+      };
+      saveChangesImmediate(updated);
     };
     reader.readAsDataURL(file);
     e.target.value = '';
   };
 
-  const activeTag = tags.find((t) => t.name.toLowerCase() === note.tag?.toLowerCase());
+  const handleUpdateCaption = (blockId: string, newCaption: string) => {
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'image') {
+        return { ...b, caption: newCaption };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
+  };
+
+  const activeTag = tags.find((t) => t.name.toLowerCase() === localNote.tag?.toLowerCase());
 
   return (
     <div className="flex-1 bg-white flex flex-col h-full min-w-0">
       {/* Top Toolbar */}
       <div className="px-8 py-3 border-b border-[#E4DECE] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {note.deleted ? (
+          {localNote.deleted ? (
             <span className="text-xs bg-[#B4553F]/10 text-[#B4553F] px-2 py-1 rounded font-medium">
               Nota en la Papelera
             </span>
@@ -247,24 +393,24 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             <button
               onClick={handleTogglePin}
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
-                note.pinned
+                localNote.pinned
                   ? 'border-[#C98A3D] bg-[#C98A3D]/10 text-[#C98A3D] font-semibold'
                   : 'border-[#E4DECE] text-[#8A8478] hover:border-[#2B2A28] hover:text-[#2B2A28]'
               }`}
             >
               <Pin className="w-3.5 h-3.5" />
-              <span>{note.pinned ? 'Fijada' : 'Fijar'}</span>
+              <span>{localNote.pinned ? 'Fijada' : 'Fijar'}</span>
             </button>
           )}
         </div>
 
         <div className="flex items-center gap-2">
           {/* Tag Selector */}
-          {!note.deleted && (
+          {!localNote.deleted && (
             <div className="relative group">
               <button className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-[#E4DECE] text-[#8A8478] hover:border-[#2B2A28] hover:text-[#2B2A28] transition-all">
                 <TagIcon className="w-3.5 h-3.5" />
-                <span>{note.tag || 'Etiqueta'}</span>
+                <span>{localNote.tag || 'Etiqueta'}</span>
               </button>
 
               {/* Dropdown de etiquetas */}
@@ -287,7 +433,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           )}
 
           {/* Delete / Restore Button */}
-          {note.deleted ? (
+          {localNote.deleted ? (
             <div className="flex items-center gap-1.5">
               <button
                 onClick={handleToggleDelete}
@@ -317,7 +463,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       </div>
 
       {/* Block Toolbar */}
-      {!note.deleted && (
+      {!localNote.deleted && (
         <div className="px-8 py-2 bg-[#F7F4EE]/60 border-b border-[#E4DECE] flex items-center gap-1">
           <button
             onClick={() => handleAddBlock('heading')}
@@ -368,8 +514,8 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
         {/* Title Input */}
         <input
           type="text"
-          value={note.title}
-          disabled={note.deleted}
+          value={localNote.title}
+          disabled={localNote.deleted}
           onChange={(e) => handleTitleChange(e.target.value)}
           placeholder="Título de la nota..."
           className="w-full text-2xl font-bold text-[#2B2A28] outline-none border-none placeholder-[#8A8478]/50 mb-2 font-sans bg-transparent"
@@ -377,24 +523,24 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
         {/* Note Metadata */}
         <div className="flex items-center gap-3 text-xs text-[#8A8478] mb-6 pb-4 border-b border-[#E4DECE]/50">
-          {note.tag && (
+          {localNote.tag && (
             <span className="flex items-center gap-1.5 bg-[#F7F4EE] border border-[#E4DECE] px-2.5 py-0.5 rounded-full font-medium text-[11px] text-[#2B2A28]">
               <span
                 className="w-2 h-2 rounded-full"
                 style={{ backgroundColor: activeTag?.color || '#8A8478' }}
               />
-              {note.tag}
+              {localNote.tag}
             </span>
           )}
           <span>
-            Editada {new Date(note.updatedAt).toLocaleString([], {
+            Editada {new Date(localNote.updatedAt).toLocaleString([], {
               day: 'numeric',
               month: 'short',
               hour: '2-digit',
               minute: '2-digit',
             })}
           </span>
-          {note.syncStatus === 'synced' && (
+          {localNote.syncStatus === 'synced' && (
             <span className="text-[#3F6E64] flex items-center gap-1">
               <Check className="w-3 h-3" /> Guardada en Drive
             </span>
@@ -403,10 +549,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
         {/* Blocks rendering */}
         <div className="space-y-4">
-          {note.blocks.map((block) => (
+          {localNote.blocks.map((block) => (
             <div key={block.id} className="relative group">
               {/* Delete block action on hover */}
-              {!note.deleted && (
+              {!localNote.deleted && (
                 <button
                   onClick={() => handleDeleteBlock(block.id)}
                   className="opacity-0 group-hover:opacity-100 absolute -left-7 top-1 text-[#8A8478] hover:text-[#B4553F] p-1 rounded transition-opacity"
@@ -421,7 +567,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 <input
                   type="text"
                   value={block.content}
-                  disabled={note.deleted}
+                  disabled={localNote.deleted}
                   onChange={(e) => handleUpdateBlockContent(block.id, e.target.value)}
                   placeholder="Encabezado..."
                   className="w-full text-lg font-bold text-[#2B2A28] outline-none bg-transparent placeholder-[#8A8478]/40 border-b border-transparent focus:border-[#E4DECE]"
@@ -432,7 +578,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               {block.type === 'text' && (
                 <textarea
                   value={block.content}
-                  disabled={note.deleted}
+                  disabled={localNote.deleted}
                   onChange={(e) => handleUpdateBlockContent(block.id, e.target.value)}
                   placeholder="Escribe aquí... usa **negrita** para resaltar"
                   rows={Math.max(2, block.content.split('\n').length)}
@@ -449,7 +595,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                       <div key={itemId} className="flex items-center gap-2 group/item">
                         <button
                           type="button"
-                          disabled={note.deleted}
+                          disabled={localNote.deleted}
                           onClick={() => handleToggleCheckItem(block.id, idx)}
                           className={`w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0 cursor-pointer ${
                             item.checked
@@ -470,7 +616,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                           }}
                           type="text"
                           value={item.text}
-                          disabled={note.deleted}
+                          disabled={localNote.deleted}
                           onChange={(e) =>
                             handleUpdateCheckItemText(block.id, idx, e.target.value)
                           }
@@ -495,7 +641,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                           }`}
                         />
 
-                        {!note.deleted && block.items.length > 1 && (
+                        {!localNote.deleted && block.items.length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleDeleteCheckItem(block.id, idx)}
@@ -508,7 +654,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                     );
                   })}
 
-                  {!note.deleted && (
+                  {!localNote.deleted && (
                     <button
                       type="button"
                       onClick={() => handleAddCheckItem(block.id)}
@@ -538,16 +684,8 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   <input
                     type="text"
                     value={block.caption || ''}
-                    disabled={note.deleted}
-                    onChange={(e) => {
-                      const updatedBlocks = note.blocks.map((b) => {
-                        if (b.id === block.id && b.type === 'image') {
-                          return { ...b, caption: e.target.value };
-                        }
-                        return b;
-                      });
-                      saveChanges({ blocks: updatedBlocks });
-                    }}
+                    disabled={localNote.deleted}
+                    onChange={(e) => handleUpdateCaption(block.id, e.target.value)}
                     placeholder="Pie de foto opcional..."
                     className="text-xs text-[#8A8478] outline-none bg-transparent w-full italic"
                   />
@@ -557,7 +695,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           ))}
 
           {/* Quick Add block buttons if empty */}
-          {note.blocks.length === 0 && !note.deleted && (
+          {localNote.blocks.length === 0 && !localNote.deleted && (
             <div className="border border-dashed border-[#E4DECE] rounded-xl p-6 text-center text-[#8A8478] space-y-3">
               <p className="text-xs">Esta nota está vacía. Añade tu primer bloque:</p>
               <div className="flex items-center justify-center gap-2">
