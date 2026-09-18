@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Galería de imágenes</title>
+  <link rel="icon" type="image/png" href="/ico-notas.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #F7F4EE;
+      --paper-dim: #EFEBE2;
+      --card: #FFFFFF;
+      --ink: #2B2A28;
+      --muted: #8A8478;
+      --border: #E4DECE;
+      --accent: #3F6E64;
+      --accent-soft: #E4EEEC;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--paper-dim);
+      color: var(--ink);
+      padding: 32px 16px 80px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px 28px;
+      margin-bottom: 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+    }
+
+    .title-group h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .title-group p {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .copy-all-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--ink);
+      color: var(--paper);
+      border: none;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .copy-all-btn:hover {
+      background: #111;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-col: column;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.05);
+    }
+
+    .image-wrap {
+      background: #E8E4D9;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .image-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.2s;
+    }
+
+    .card:hover .image-wrap img {
+      transform: scale(1.02);
+    }
+
+    .card-body {
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .file-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0;
+      word-break: break-all;
+    }
+
+    .url-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .url-input {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--paper);
+      font-size: 12px;
+      color: var(--ink);
+      font-family: monospace;
+      outline: none;
+    }
+
+    .btn {
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--ink);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      text-decoration: none;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: var(--paper);
+      border-color: var(--ink);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #345c54;
+      border-color: #345c54;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--ink);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.2s ease;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="title-group">
+      <h1>Galería de imágenes</h1>
+      <p>Imágenes públicas listas para compartir y enlazar</p>
+    </div>
+    <button class="copy-all-btn" onclick="copyAllUrls()">
+      📋 Copiar todas las URLs
+    </button>
+  </header>
+
+  <div class="grid" id="gallery-grid"></div>
+</div>
+
+<div class="toast" id="toast">URL copiada al portapapeles</div>
+
+<script>
+  const images = [
+    { name: 'bsmnt2_main.png', file: '/ajeno/bsmnt2_main.png' },
+    { name: 'bsmnt2_table.png', file: '/ajeno/bsmnt2_table.png' },
+    { name: 'lower.png', file: '/ajeno/lower.png' },
+    { name: 'main.png', file: '/ajeno/main.png' },
+    { name: 'stairs.png', file: '/ajeno/stairs.png' }
+  ];
+
+  const grid = document.getElementById('gallery-grid');
+  const toast = document.getElementById('toast');
+
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  function getAbsoluteUrl(relativePath) {
+    return window.location.origin + relativePath;
+  }
+
+  function copyUrl(url) {
+    navigator.clipboard.writeText(url).then(() => {
+      showToast('✓ Enlace copiado');
+    });
+  }
+
+  function copyAllUrls() {
+    const text = images.map(img => `${img.name}: ${getAbsoluteUrl(img.file)}`).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('✓ Todas las URLs copiadas');
+    });
+  }
+
+  // Renderizar tarjetas
+  images.forEach(img => {
+    const fullUrl = getAbsoluteUrl(img.file);
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="image-wrap">
+        <img src="${img.file}" alt="${img.name}" loading="lazy" />
+      </div>
+      <div class="card-body">
+        <h3 class="file-name">${img.name}</h3>
+        <div class="url-row">
+          <input class="url-input" type="text" readonly value="${fullUrl}" onclick="this.select()" />
+          <button class="btn btn-primary" onclick="copyUrl('${fullUrl}')">Copiar</button>
+        </div>
+        <a class="btn" href="${img.file}" target="_blank" rel="noopener noreferrer">
+          Ver original ↗
+        </a>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+</script>
+
+</body>
+</html>
