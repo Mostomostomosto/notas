@@ -198,9 +198,29 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
             )}
 
             {token && (
-              <p className="text-[11px] text-[#3F6E64] bg-[#3F6E64]/5 p-2 rounded-lg leading-relaxed">
-                ✓ Tu sesión permanece guardada y se renueva automáticamente en segundo plano para evitar desconexiones en iPhone y Safari.
-              </p>
+              <div className="text-[11px] leading-relaxed">
+                {localStorage.getItem('app_notas_refresh_token') ? (
+                  <p className="text-[#3F6E64] bg-[#3F6E64]/10 p-2.5 rounded-lg font-medium">
+                    ✓ Conexión permanente activa: la app renovará el acceso en segundo plano automáticamente y nunca se desconectará en iPhone ni Safari.
+                  </p>
+                ) : (
+                  <div className="bg-[#C98A3D]/10 p-2.5 rounded-lg text-[#2B2A28] space-y-1.5">
+                    <p className="font-medium text-[#C98A3D]">
+                      ⚠️ Sesión temporal de 1 hora detectada
+                    </p>
+                    <p className="text-[#8A8478]">
+                      Para activar la conexión permanente sin desconexiones en iPhone, pulsa en reconectar una sola vez:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onConnectGoogle}
+                      className="px-2.5 py-1 bg-[#2B2A28] hover:bg-black text-white rounded text-[11px] font-semibold cursor-pointer"
+                    >
+                      Activar conexión permanente
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

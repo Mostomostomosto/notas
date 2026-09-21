@@ -10,6 +10,8 @@ import {
   logout,
   getSavedSession,
   waitForGoogleScript,
+  getValidAccessToken,
+  subscribeTokenUpdates,
   UserProfile,
 } from './services/googleAuth';
 import {
@@ -49,14 +51,28 @@ export const App: React.FC = () => {
       if (message) setSyncMessage(message);
     });
 
+    // Suscribirse a actualizaciones de token de acceso
+    const unsubscribeToken = subscribeTokenUpdates((newToken) => {
+      if (!isMounted) return;
+      setToken(newToken);
+    });
+
     // Restaurar sesión de Google si existe
     const session = getSavedSession();
     if (session) {
-      setToken(session.token);
       if (session.profile) setUserProfile(session.profile);
-      // Sincronizar en segundo plano si el token está activo
       if (session.token) {
+        setToken(session.token);
         runFullSync(session.token);
+      } else if (session.hasRefreshToken) {
+        // Renovar silenciosamente en segundo plano
+        getValidAccessToken().then((validToken) => {
+          if (!isMounted) return;
+          if (validToken) {
+            setToken(validToken);
+            runFullSync(validToken);
+          }
+        });
       }
     }
 
@@ -79,6 +95,7 @@ export const App: React.FC = () => {
     return () => {
       isMounted = false;
       unsubscribeSync();
+      unsubscribeToken();
     };
   }, []);
 

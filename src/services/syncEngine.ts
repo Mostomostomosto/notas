@@ -6,7 +6,7 @@ import {
   readJsonFile,
 } from './googleDrive';
 import { getSettings } from './settings';
-import { silentRefreshToken } from './googleAuth';
+import { getValidAccessToken, refreshAccessToken } from './googleAuth';
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 
@@ -53,9 +53,14 @@ async function getNotesFolderId(token: string): Promise<string> {
 /**
  * Sube a Google Drive todas las notas con syncStatus === 'pending'
  */
-export async function syncPendingNotes(token: string): Promise<void> {
+export async function syncPendingNotes(providedToken?: string | null): Promise<void> {
   if (!navigator.onLine) {
     notifyState('offline', 'Sin conexión a internet');
+    return;
+  }
+
+  let token = providedToken || (await getValidAccessToken());
+  if (!token) {
     return;
   }
 
@@ -70,14 +75,12 @@ export async function syncPendingNotes(token: string): Promise<void> {
 
   notifyState('syncing', `Guardando ${pendingNotes.length} cambio(s)...`);
 
-  try {
-    const folderId = await getNotesFolderId(token);
+  const executeUpload = async (activeToken: string) => {
+    const folderId = await getNotesFolderId(activeToken);
 
     for (const note of pendingNotes) {
-      // Marcar como en proceso
       await db.notes.update(note.id, { syncStatus: 'syncing' });
 
-      // Formato limpio según especificación del proyecto
       const payload = {
         id: note.id,
         title: note.title,
@@ -103,7 +106,7 @@ export async function syncPendingNotes(token: string): Promise<void> {
       };
 
       const result = await uploadJsonFile(
-        token,
+        activeToken,
         `${note.id}.json`,
         payload,
         folderId,
@@ -115,14 +118,30 @@ export async function syncPendingNotes(token: string): Promise<void> {
         syncStatus: 'synced',
       });
     }
+  };
 
+  try {
+    await executeUpload(token);
     notifyState('idle', 'Sincronizado');
   } catch (err: unknown) {
     console.error('Error al sincronizar notas pendientes:', err);
     const errStr = String(err);
+
+    // Si el error es 401 (token expirado), renovamos y reintentamos de inmediato
     if (errStr.includes('401')) {
-      silentRefreshToken();
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        try {
+          resetCachedFolderId();
+          await executeUpload(newToken);
+          notifyState('idle', 'Sincronizado');
+          return;
+        } catch (retryErr) {
+          console.error('Fallo en reintento con token renovado:', retryErr);
+        }
+      }
     }
+
     notifyState('error', 'Error al sincronizar con Google Drive');
   }
 }
@@ -130,32 +149,32 @@ export async function syncPendingNotes(token: string): Promise<void> {
 /**
  * Descarga notas remotas desde Drive y las reconcilia con la base de datos local
  */
-export async function pullRemoteNotes(token: string): Promise<void> {
+export async function pullRemoteNotes(providedToken?: string | null): Promise<void> {
   if (!navigator.onLine) return;
 
-  try {
-    notifyState('syncing', 'Buscando cambios en Drive...');
-    const folderId = await getNotesFolderId(token);
-    const remoteFiles = await listFilesInFolder(token, folderId);
+  let token = providedToken || (await getValidAccessToken());
+  if (!token) return;
+
+  const executePull = async (activeToken: string) => {
+    const folderId = await getNotesFolderId(activeToken);
+    const remoteFiles = await listFilesInFolder(activeToken, folderId);
 
     const jsonFiles = remoteFiles.filter((f) => f.name.endsWith('.json'));
 
     for (const file of jsonFiles) {
       try {
-        const remoteNote = await readJsonFile<Note>(token, file.id);
+        const remoteNote = await readJsonFile<Note>(activeToken, file.id);
         if (!remoteNote || !remoteNote.id) continue;
 
         const localNote = await db.notes.get(remoteNote.id);
 
         if (!localNote) {
-          // Nota nueva en remoto: guardar localmente
           await db.notes.put({
             ...remoteNote,
             driveFileId: file.id,
             syncStatus: 'synced',
           });
         } else {
-          // Reconciliación LWW (Last-Write-Wins)
           const remoteTime = new Date(remoteNote.updatedAt).getTime();
           const localTime = new Date(localNote.updatedAt).getTime();
 
@@ -171,14 +190,30 @@ export async function pullRemoteNotes(token: string): Promise<void> {
         console.warn(`No se pudo procesar archivo remoto ${file.name}:`, e);
       }
     }
+  };
 
+  try {
+    notifyState('syncing', 'Buscando cambios en Drive...');
+    await executePull(token);
     notifyState('idle', 'Sincronizado');
   } catch (err: unknown) {
     console.error('Error al descargar notas remotas:', err);
     const errStr = String(err);
+
     if (errStr.includes('401')) {
-      silentRefreshToken();
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        try {
+          resetCachedFolderId();
+          await executePull(newToken);
+          notifyState('idle', 'Sincronizado');
+          return;
+        } catch (retryErr) {
+          console.error('Fallo en reintento pull tras renovar:', retryErr);
+        }
+      }
     }
+
     notifyState('error', 'Error al consultar Drive');
   }
 }
@@ -186,16 +221,17 @@ export async function pullRemoteNotes(token: string): Promise<void> {
 /**
  * Ejecuta una sincronización completa (subida de cambios y descarga de novedades)
  */
-export async function runFullSync(token: string): Promise<void> {
-  await syncPendingNotes(token);
-  await pullRemoteNotes(token);
+export async function runFullSync(token?: string | null): Promise<void> {
+  const activeToken = token || (await getValidAccessToken());
+  if (!activeToken) return;
+  await syncPendingNotes(activeToken);
+  await pullRemoteNotes(activeToken);
 }
 
 /**
  * Planifica una sincronización con debounce de 1500ms tras una edición
  */
 export function scheduleSync(token: string | null): void {
-  if (!token) return;
   if (!getSettings().autoSync) return;
 
   if (syncTimeout) {
@@ -204,7 +240,10 @@ export function scheduleSync(token: string | null): void {
 
   notifyState('idle', 'Cambios pendientes...');
 
-  syncTimeout = window.setTimeout(() => {
-    syncPendingNotes(token);
+  syncTimeout = window.setTimeout(async () => {
+    const activeToken = token || (await getValidAccessToken());
+    if (activeToken) {
+      syncPendingNotes(activeToken);
+    }
   }, 1500);
 }

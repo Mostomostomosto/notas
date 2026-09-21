@@ -3,14 +3,14 @@ declare global {
     google?: {
       accounts: {
         oauth2: {
-          initTokenClient: (config: {
+          initCodeClient: (config: {
             client_id: string;
             scope: string;
-            callback: (response: TokenResponse) => void;
+            ux_mode?: 'popup' | 'redirect';
+            callback: (response: { code?: string; error?: string; error_description?: string }) => void;
             error_callback?: (error: unknown) => void;
-            prompt?: string;
-            hint?: string;
-          }) => TokenClient;
+          }) => CodeClient;
+          initTokenClient: (config: unknown) => unknown;
           revoke: (token: string, done: () => void) => void;
         };
       };
@@ -18,17 +18,8 @@ declare global {
   }
 }
 
-export interface TokenResponse {
-  access_token: string;
-  expires_in: number;
-  scope: string;
-  token_type: string;
-  error?: string;
-  error_description?: string;
-}
-
-export interface TokenClient {
-  requestAccessToken: (overrideConfig?: { prompt?: string; hint?: string }) => void;
+export interface CodeClient {
+  requestCode: (overrideConfig?: { prompt?: string; hint?: string }) => void;
 }
 
 export interface UserProfile {
@@ -40,18 +31,33 @@ export interface UserProfile {
 const CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
   '563374226640-088jeul5qu064mjk40d5a0h0ub87fp3h.apps.googleusercontent.com';
+
 const SCOPE =
   'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
 
-// Usamos localStorage para que la sesión persista de forma permanente en iOS y PC
+// Claves persistentes en localStorage
 const STORAGE_KEY_TOKEN = 'app_notas_access_token';
 const STORAGE_KEY_EXPIRY = 'app_notas_token_expiry';
+const STORAGE_KEY_REFRESH_TOKEN = 'app_notas_refresh_token';
 const STORAGE_KEY_USER = 'app_notas_user_profile';
 const STORAGE_KEY_SCOPES = 'app_notas_granted_scopes';
 const STORAGE_KEY_LOGGED_IN = 'app_notas_is_logged_in';
 
-let tokenClientInstance: TokenClient | null = null;
+let codeClientInstance: CodeClient | null = null;
 let activeSuccessHandler: ((token: string, profile?: UserProfile, scope?: string) => void) | null = null;
+
+const tokenListeners = new Set<(token: string | null) => void>();
+
+export function subscribeTokenUpdates(listener: (token: string | null) => void): () => void {
+  tokenListeners.add(listener);
+  return () => {
+    tokenListeners.delete(listener);
+  };
+}
+
+function notifyTokenUpdated(token: string | null) {
+  tokenListeners.forEach((l) => l(token));
+}
 
 /**
  * Espera a que el script de Google Identity Services esté cargado en window
@@ -68,12 +74,97 @@ export async function waitForGoogleScript(timeoutMs = 6000): Promise<boolean> {
 }
 
 /**
- * Inicializa el cliente OAuth2 de Google Identity Services
+ * Intercambia el código de autorización obtenido en el popup por tokens permanentes
+ */
+async function exchangeCodeForTokens(code: string): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  scope?: string;
+}> {
+  const res = await fetch('/api/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error_description || err.error || 'Error al intercambiar código de Google');
+  }
+
+  return await res.json();
+}
+
+/**
+ * Renueva el token de acceso de Google silenciosamente usando el refresh_token
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = localStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
+  if (!refreshToken) {
+    return null;
+  }
+
+  try {
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('Error al renovar token en backend:', err);
+      if (err.error === 'invalid_grant') {
+        // Si el usuario revocó el acceso desde su cuenta de Google
+        logout();
+      }
+      return null;
+    }
+
+    const data = await res.json();
+    const newAccessToken = data.access_token;
+    const expiryTime = Date.now() + (data.expires_in - 60) * 1000;
+
+    localStorage.setItem(STORAGE_KEY_TOKEN, newAccessToken);
+    localStorage.setItem(STORAGE_KEY_EXPIRY, expiryTime.toString());
+    notifyTokenUpdated(newAccessToken);
+
+    return newAccessToken;
+  } catch (err) {
+    console.warn('Fallo de conexión al renovar token:', err);
+    return null;
+  }
+}
+
+/**
+ * Devuelve un token de acceso válido. Si ha caducado, lo renueva automáticamente en segundo plano.
+ */
+export async function getValidAccessToken(): Promise<string | null> {
+  const token = localStorage.getItem(STORAGE_KEY_TOKEN);
+  const expiry = localStorage.getItem(STORAGE_KEY_EXPIRY);
+  const hasRefreshToken = !!localStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
+
+  // Si el token aún es válido
+  if (token && expiry && Date.now() < parseInt(expiry, 10)) {
+    return token;
+  }
+
+  // Si ha caducado pero tenemos refresh_token, renovamos en segundo plano
+  if (hasRefreshToken) {
+    return await refreshAccessToken();
+  }
+
+  return token;
+}
+
+/**
+ * Inicializa el cliente de autorización por código (OAuth 2.0 Authorization Code Flow)
  */
 export function initGoogleAuth(
   onSuccess: (token: string, profile?: UserProfile, scope?: string) => void,
   onError: (err: unknown) => void
-): TokenClient | null {
+): CodeClient | null {
   if (!window.google?.accounts?.oauth2) {
     console.error('Google Identity Services no está cargado');
     return null;
@@ -81,72 +172,92 @@ export function initGoogleAuth(
 
   activeSuccessHandler = onSuccess;
 
-  tokenClientInstance = window.google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPE,
-    callback: async (response: TokenResponse) => {
-      if (response.error) {
-        // Si el fallo fue silencioso por no haber interacción del usuario, no es error crítico
-        console.warn('Respuesta OAuth:', response);
-        onError(response);
-        return;
-      }
-
-      const expiryTime = Date.now() + (response.expires_in - 60) * 1000;
-      localStorage.setItem(STORAGE_KEY_TOKEN, response.access_token);
-      localStorage.setItem(STORAGE_KEY_EXPIRY, expiryTime.toString());
-      localStorage.setItem(STORAGE_KEY_SCOPES, response.scope || '');
-      localStorage.setItem(STORAGE_KEY_LOGGED_IN, 'true');
-
-      // Obtener datos del perfil del usuario (email, avatar)
-      try {
-        const profile = await fetchUserProfile(response.access_token);
-        if (profile) {
-          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(profile));
+  try {
+    codeClientInstance = window.google.accounts.oauth2.initCodeClient({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+      ux_mode: 'popup',
+      callback: async (response) => {
+        if (response.error) {
+          console.warn('Error OAuth:', response);
+          onError(response);
+          return;
         }
-        activeSuccessHandler?.(response.access_token, profile, response.scope);
-      } catch {
-        const cachedUser = getSavedUserProfile();
-        activeSuccessHandler?.(response.access_token, cachedUser, response.scope);
-      }
-    },
-    error_callback: (err) => {
-      console.warn('Error de autenticación Google:', err);
-      onError(err);
-    },
-  });
 
-  return tokenClientInstance;
+        if (!response.code) {
+          onError(new Error('No se recibió código de autorización'));
+          return;
+        }
+
+        try {
+          // Intercambiar código por access_token y refresh_token permanente
+          const tokens = await exchangeCodeForTokens(response.code);
+          const expiryTime = Date.now() + (tokens.expires_in - 60) * 1000;
+
+          localStorage.setItem(STORAGE_KEY_TOKEN, tokens.access_token);
+          localStorage.setItem(STORAGE_KEY_EXPIRY, expiryTime.toString());
+          if (tokens.refresh_token) {
+            localStorage.setItem(STORAGE_KEY_REFRESH_TOKEN, tokens.refresh_token);
+          }
+          if (tokens.scope) {
+            localStorage.setItem(STORAGE_KEY_SCOPES, tokens.scope);
+          }
+          localStorage.setItem(STORAGE_KEY_LOGGED_IN, 'true');
+
+          // Obtener perfil de usuario
+          let profile = getSavedUserProfile();
+          try {
+            const fresh = await fetchUserProfile(tokens.access_token);
+            if (fresh) {
+              profile = fresh;
+              localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(profile));
+            }
+          } catch {
+            // usar perfil cacheado
+          }
+
+          notifyTokenUpdated(tokens.access_token);
+          activeSuccessHandler?.(tokens.access_token, profile, tokens.scope);
+        } catch (err) {
+          console.error('Error al completar autenticación:', err);
+          onError(err);
+        }
+      },
+      error_callback: (err) => {
+        console.warn('Error de Google Identity:', err);
+        onError(err);
+      },
+    });
+
+    return codeClientInstance;
+  } catch (e) {
+    console.error('No se pudo inicializar initCodeClient:', e);
+    return null;
+  }
 }
 
 /**
- * Solicita el token de acceso mostrando la ventana de Google si es necesario
+ * Solicita el código de acceso abriendo la ventana emergente de Google
  */
-export function requestLogin(forcePrompt = false) {
-  if (!tokenClientInstance) {
+export function requestLogin(forceConsent = false) {
+  if (!codeClientInstance) {
     throw new Error('Cliente OAuth no inicializado');
   }
   const user = getSavedUserProfile();
-  tokenClientInstance.requestAccessToken({
-    prompt: forcePrompt ? 'consent' : '',
+  const hasRefresh = !!localStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
+
+  codeClientInstance.requestCode({
+    // Forzamos consent si no tenemos refresh_token para asegurar que Google lo entregue
+    prompt: forceConsent || !hasRefresh ? 'consent' : '',
     hint: user?.email || undefined,
   });
 }
 
 /**
- * Intenta renovar el token en segundo plano sin mostrar ninguna ventana
+ * Compatibilidad con la llamada anterior
  */
 export function silentRefreshToken(): void {
-  if (!tokenClientInstance) return;
-  const user = getSavedUserProfile();
-  try {
-    tokenClientInstance.requestAccessToken({
-      prompt: '',
-      hint: user?.email || undefined,
-    });
-  } catch (err) {
-    console.warn('No se pudo renovar token de forma silenciosa:', err);
-  }
+  refreshAccessToken().catch((e) => console.warn('silentRefreshToken:', e));
 }
 
 /**
@@ -156,9 +267,11 @@ export function logout(onComplete?: () => void) {
   const token = localStorage.getItem(STORAGE_KEY_TOKEN);
   localStorage.removeItem(STORAGE_KEY_TOKEN);
   localStorage.removeItem(STORAGE_KEY_EXPIRY);
+  localStorage.removeItem(STORAGE_KEY_REFRESH_TOKEN);
   localStorage.removeItem(STORAGE_KEY_USER);
   localStorage.removeItem(STORAGE_KEY_SCOPES);
   localStorage.removeItem(STORAGE_KEY_LOGGED_IN);
+  notifyTokenUpdated(null);
 
   if (token && window.google?.accounts?.oauth2?.revoke) {
     window.google.accounts.oauth2.revoke(token, () => {
@@ -184,35 +297,32 @@ export function getSavedUserProfile(): UserProfile | undefined {
 
 /**
  * Recupera la sesión guardada en localStorage.
- * Si el token ha expirado pero el usuario estaba conectado, desencadena renovación silenciosa automática.
  */
 export function getSavedSession(): {
   token: string | null;
   profile?: UserProfile;
   scope?: string;
-  isExpired?: boolean;
+  hasRefreshToken: boolean;
+  isLoggedIn: boolean;
 } | null {
   const isLoggedIn = localStorage.getItem(STORAGE_KEY_LOGGED_IN) === 'true';
   const token = localStorage.getItem(STORAGE_KEY_TOKEN);
   const expiry = localStorage.getItem(STORAGE_KEY_EXPIRY);
+  const refreshToken = localStorage.getItem(STORAGE_KEY_REFRESH_TOKEN);
   const profile = getSavedUserProfile();
   const scope = localStorage.getItem(STORAGE_KEY_SCOPES) || undefined;
 
   if (!isLoggedIn) return null;
 
-  // Si no hay token o ha expirado
   const isExpired = !token || !expiry || Date.now() > parseInt(expiry, 10);
 
-  if (isExpired) {
-    // Desencadenar renovación en segundo plano silenciosa si es posible
-    setTimeout(() => {
-      silentRefreshToken();
-    }, 100);
-
-    return { token: null, profile, scope, isExpired: true };
-  }
-
-  return { token, profile, scope, isExpired: false };
+  return {
+    token: isExpired ? null : token,
+    profile,
+    scope,
+    hasRefreshToken: !!refreshToken,
+    isLoggedIn: true,
+  };
 }
 
 /**
