@@ -15,6 +15,11 @@ function localAuthApiPlugin(clientId: string, clientSecret: string): Plugin {
           req.on('end', async () => {
             try {
               const { code } = JSON.parse(body || '{}');
+              if (!code) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Missing code parameter' }));
+                return;
+              }
               const params = new URLSearchParams({
                 client_id: clientId,
                 client_secret: clientSecret,
@@ -46,6 +51,11 @@ function localAuthApiPlugin(clientId: string, clientSecret: string): Plugin {
           req.on('end', async () => {
             try {
               const { refresh_token } = JSON.parse(body || '{}');
+              if (!refresh_token) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Missing refresh_token parameter' }));
+                return;
+              }
               const params = new URLSearchParams({
                 client_id: clientId,
                 client_secret: clientSecret,
