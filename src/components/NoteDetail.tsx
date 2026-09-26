@@ -848,9 +848,9 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               {/* Dropdown de etiquetas */}
               <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[150px] max-h-64 overflow-y-auto">
                 {tags
-                  .filter((t: Tag) => !t.parentId)
+                  .filter((t: Tag) => !t.parentId && !t.archived)
                   .map((parentTag: Tag) => {
-                    const children = tags.filter((t: Tag) => t.parentId === parentTag.id);
+                    const children = tags.filter((t: Tag) => t.parentId === parentTag.id && !t.archived);
                     return (
                       <div key={parentTag.id}>
                         <button

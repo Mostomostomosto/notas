@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Tag, desaturateColor } from '../db/db';
+import { db, Tag, desaturateColor, isNoteArchived } from '../db/db';
 import { SyncState, scheduleSync } from '../services/syncEngine';
 import { UserProfile } from '../services/googleAuth';
 import {
@@ -22,6 +22,7 @@ import {
   ArrowLeft,
   FolderInput,
   Calendar as CalendarIcon,
+  Archive,
 } from 'lucide-react';
 
 export type SidebarFilter =
@@ -79,12 +80,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const notes = useLiveQuery(() => db.notes.toArray()) || [];
   const events = useLiveQuery(() => db.events.filter((e) => !e.deleted).toArray()) || [];
 
-  const allNotesCount = notes.filter((n) => !n.deleted).length;
-  const pinnedCount = notes.filter((n) => !n.deleted && n.pinned).length;
+  const allNotesCount = notes.filter((n) => !n.deleted && !isNoteArchived(n.tag, tags)).length;
+  const pinnedCount = notes.filter((n) => !n.deleted && n.pinned && !isNoteArchived(n.tag, tags)).length;
   const trashCount = notes.filter((n) => n.deleted).length;
 
-  const rootTags = tags.filter((t: Tag) => !t.parentId);
-  const getChildTags = (parentId: string) => tags.filter((t: Tag) => t.parentId === parentId);
+  const rootTags = tags.filter((t: Tag) => !t.parentId && !t.archived);
+  const getChildTags = (parentId: string) => tags.filter((t: Tag) => t.parentId === parentId && !t.archived);
+
+  // Listas para la sección de etiquetas archivadas
+  const archivedRootTags = tags.filter((t: Tag) => !t.parentId && t.archived);
+  const getArchivedChildTags = (parentId: string) => tags.filter((t: Tag) => t.parentId === parentId);
+  const orphanArchivedChildTags = tags.filter((t: Tag) => {
+    if (!t.parentId || !t.archived) return false;
+    const parent = tags.find((p) => p.id === t.parentId);
+    return !parent || !parent.archived;
+  });
+  const totalArchivedCount = tags.filter((t: Tag) => t.archived).length;
 
   const getExactTagCount = (tagName: string) => {
     return notes.filter((n) => !n.deleted && n.tag && n.tag.toLowerCase() === tagName.toLowerCase()).length;
@@ -201,6 +212,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
         parentId: newParentId,
       });
     }
+  };
+
+  const handleArchiveTag = async (tagToArchive: Tag) => {
+    setContextMenu(null);
+    const childTags = tags.filter((t) => t.parentId === tagToArchive.id);
+    if (childTags.length > 0) {
+      const allNames = [
+        tagToArchive.name.toLowerCase(),
+        ...childTags.map((c) => c.name.toLowerCase()),
+      ];
+      const hiddenNotesCount = notes.filter(
+        (n) => !n.deleted && n.tag && allNames.includes(n.tag.toLowerCase())
+      ).length;
+      const confirmMsg = `¿Archivar la etiqueta "${tagToArchive.name}"? Quedarán ocultas un total de ${hiddenNotesCount} nota(s) sumando las de esta etiqueta y sus ${childTags.length} subetiqueta(s).`;
+      if (!window.confirm(confirmMsg)) {
+        return;
+      }
+    }
+    await db.tags.update(tagToArchive.id, { archived: true });
+  };
+
+  const handleUnarchiveTag = async (tagToUnarchive: Tag) => {
+    setContextMenu(null);
+    await db.tags.update(tagToUnarchive.id, { archived: false });
   };
 
   const handleDeleteTag = async (tagToDelete: Tag) => {
@@ -483,6 +518,226 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
+        {/* Sección Archivadas (debajo de Papelera) */}
+        <div className="pt-2 border-t border-[#E4DECE]/70">
+          <div className="flex items-center justify-between px-3 mb-1">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-wider text-[#8A8478]">
+              <Archive className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Archivadas</span>
+            </div>
+            <span className="text-[10px] text-[#8A8478] font-medium">
+              {totalArchivedCount}
+            </span>
+          </div>
+
+          {totalArchivedCount === 0 ? (
+            <div className="px-3 py-1 text-[11px] text-[#8A8478]/70 italic">
+              Sin etiquetas archivadas
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {archivedRootTags.map((rootTag: Tag) => {
+                const active = isFilterActive({
+                  type: 'tag',
+                  tagId: rootTag.id,
+                  tagName: rootTag.name,
+                });
+                const count = getTagCount(rootTag);
+                const childTags = getArchivedChildTags(rootTag.id);
+
+                return (
+                  <div key={rootTag.id} className="space-y-0.5">
+                    <div
+                      onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
+                      onClick={() =>
+                        onSelectFilter({
+                          type: 'tag',
+                          tagId: rootTag.id,
+                          tagName: rootTag.name,
+                        })
+                      }
+                      className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
+                        active
+                          ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                          : 'hover:bg-black/5 text-[#2B2A28]/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0 opacity-70"
+                          style={{ backgroundColor: rootTag.color }}
+                        />
+                        <span className="truncate">{rootTag.name}</span>
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
+                          archivada
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openContextMenu(e, 'tag', rootTag);
+                          }}
+                          className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                            active
+                              ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                              : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                          }`}
+                          title="Opciones de etiqueta archivada"
+                        >
+                          <MoreVertical className="w-3 h-3" />
+                        </span>
+                        <span
+                          className={`text-[11px] ${
+                            active ? 'text-white/80' : 'text-[#8A8478]'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Subetiquetas hijas de la raíz archivada */}
+                    {childTags.map((child: Tag) => {
+                      const childActive = isFilterActive({
+                        type: 'tag',
+                        tagId: child.id,
+                        tagName: child.name,
+                      });
+                      const childCount = getExactTagCount(child.name);
+                      return (
+                        <div
+                          key={child.id}
+                          onContextMenu={(e) => openContextMenu(e, 'tag', child)}
+                          onClick={() =>
+                            onSelectFilter({
+                              type: 'tag',
+                              tagId: child.id,
+                              tagName: child.name,
+                            })
+                          }
+                          className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
+                            childActive
+                              ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                              : 'hover:bg-black/5 text-[#2B2A28]/80'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0 opacity-70"
+                              style={{ backgroundColor: desaturateColor(child.color) }}
+                            />
+                            <span className="truncate">{child.name}</span>
+                            {child.archived && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
+                                archivada
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openContextMenu(e, 'tag', child);
+                              }}
+                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                childActive
+                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                              }`}
+                              title="Opciones de subetiqueta"
+                            >
+                              <MoreVertical className="w-3 h-3" />
+                            </span>
+                            <span
+                              className={`text-[10.5px] ${
+                                childActive ? 'text-white/80' : 'text-[#8A8478]'
+                              }`}
+                            >
+                              {childCount}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+
+              {/* Subetiquetas archivadas por su cuenta cuyo padre NO está archivado */}
+              {orphanArchivedChildTags.map((child: Tag) => {
+                const parent = tags.find((p) => p.id === child.parentId);
+                const childActive = isFilterActive({
+                  type: 'tag',
+                  tagId: child.id,
+                  tagName: child.name,
+                });
+                const childCount = getExactTagCount(child.name);
+                return (
+                  <div
+                    key={child.id}
+                    onContextMenu={(e) => openContextMenu(e, 'tag', child)}
+                    onClick={() =>
+                      onSelectFilter({
+                        type: 'tag',
+                        tagId: child.id,
+                        tagName: child.name,
+                      })
+                    }
+                    className={`w-full flex items-center justify-between pl-6 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
+                      childActive
+                        ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                        : 'hover:bg-black/5 text-[#2B2A28]/80'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0 opacity-70"
+                        style={{ backgroundColor: desaturateColor(child.color) }}
+                      />
+                      <span className="truncate">{child.name}</span>
+                      {parent && (
+                        <span className="text-[9.5px] text-[#8A8478] italic truncate">
+                          (de {parent.name})
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openContextMenu(e, 'tag', child);
+                        }}
+                        className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                          childActive
+                            ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                            : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                        }`}
+                        title="Opciones de subetiqueta archivada"
+                      >
+                        <MoreVertical className="w-3 h-3" />
+                      </span>
+                      <span
+                        className={`text-[10.5px] ${
+                          childActive ? 'text-white/80' : 'text-[#8A8478]'
+                        }`}
+                      >
+                        {childCount}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Tags Section */}
         <div>
           <div className="flex items-center justify-between px-3 mb-1.5">
@@ -760,7 +1015,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <option value="">Principal (sin padre)</option>
                   {tags
-                    .filter((t) => t.id !== 'sin-etiqueta')
+                    .filter((t) => t.id !== 'sin-etiqueta' && !t.archived)
                     .map((t) => {
                       const isSub = !!t.parentId;
                       return (
@@ -958,8 +1213,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es hija: Intento de añadir subetiqueta a ella misma */}
-                  {!isRoot && (
+                  {/* Si está archivada: botón Desarchivar */}
+                  {contextMenu.tag.archived && (
+                    <button
+                      onClick={() => handleUnarchiveTag(contextMenu.tag!)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#3F6E64] transition-colors text-left cursor-pointer font-medium"
+                    >
+                      <Archive className="w-3.5 h-3.5 text-[#3F6E64]" />
+                      <span>Desarchivar etiqueta</span>
+                    </button>
+                  )}
+
+                  {/* Si es raíz y no está archivada: Añadir subetiqueta */}
+                  {!contextMenu.tag.archived && isRoot && contextMenu.tag.id !== 'sin-etiqueta' && (
+                    <button
+                      onClick={() => {
+                        const tagId = contextMenu.tag!.id;
+                        setContextMenu(null);
+                        setAddingSubtagForId(tagId);
+                        setSubtagName('');
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <CornerDownRight className="w-3.5 h-3.5 text-[#3F6E64]" />
+                      <span>Añadir subetiqueta</span>
+                    </button>
+                  )}
+
+                  {/* Si es hija y no está archivada: Intento de añadir subetiqueta a ella misma */}
+                  {!contextMenu.tag.archived && !isRoot && (
                     <button
                       onClick={() => {
                         setContextMenu(null);
@@ -972,8 +1254,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es raíz y hay otras etiquetas principales: Mover dentro de otra etiqueta */}
-                  {isRoot && contextMenu.tag.id !== 'sin-etiqueta' && otherRoots.length > 0 && (
+                  {/* Si es raíz y no está archivada: Mover dentro de otra etiqueta */}
+                  {!contextMenu.tag.archived && isRoot && contextMenu.tag.id !== 'sin-etiqueta' && otherRoots.length > 0 && (
                     <button
                       onClick={() => {
                         setMovingTag(contextMenu.tag!);
@@ -986,8 +1268,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es hija: Añadir otra subetiqueta al mismo padre */}
-                  {!isRoot && parentTag && (
+                  {/* Si es hija y no está archivada: Añadir otra subetiqueta al mismo padre */}
+                  {!contextMenu.tag.archived && !isRoot && parentTag && (
                     <button
                       onClick={() => {
                         const parentId = contextMenu.tag!.parentId!;
@@ -1002,14 +1284,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es hija: Convertir en etiqueta principal */}
-                  {!isRoot && (
+                  {/* Si es hija y no está archivada: Convertir en etiqueta principal */}
+                  {!contextMenu.tag.archived && !isRoot && (
                     <button
                       onClick={() => handleMoveTag(contextMenu.tag!, null)}
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
                     >
                       <ArrowLeft className="w-3.5 h-3.5 text-[#8A8478]" />
                       <span>Convertir en principal</span>
+                    </button>
+                  )}
+
+                  {/* Archivar etiqueta (si está activa) */}
+                  {!contextMenu.tag.archived && contextMenu.tag.id !== 'sin-etiqueta' && (
+                    <button
+                      onClick={() => handleArchiveTag(contextMenu.tag!)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#8A8478] hover:text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <Archive className="w-3.5 h-3.5 text-[#8A8478]" />
+                      <span>Archivar etiqueta</span>
                     </button>
                   )}
 
@@ -1074,7 +1367,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </p>
             <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
               {tags
-                .filter((t) => t.id !== movingTag.id && t.id !== 'sin-etiqueta')
+                .filter((t) => t.id !== movingTag.id && t.id !== 'sin-etiqueta' && !t.archived)
                 .map((t) => {
                   const isSub = !!t.parentId;
                   return (

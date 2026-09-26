@@ -66,6 +66,7 @@ export interface Tag {
   name: string;
   color: string;
   parentId?: string;
+  archived?: boolean;
 }
 
 export type EventRepeat = 'none' | 'monthly' | 'yearly';
@@ -110,10 +111,31 @@ export class NotasDatabase extends Dexie {
     this.version(3).stores({
       events: 'id, date, repeat, deleted, updatedAt, createdAt, syncStatus, driveFileId',
     });
+    this.version(4).stores({
+      tags: 'id, name, parentId, archived',
+    });
   }
 }
 
 export const db = new NotasDatabase();
+
+/**
+ * Determina si una nota se considera archivada según la regla calculada:
+ * - Su propia etiqueta tiene archived: true, O
+ * - La etiqueta padre de su etiqueta (si la tiene) tiene archived: true.
+ * NO propaga físicamente ningún flag; calcula la visibilidad en tiempo de ejecución.
+ */
+export function isNoteArchived(noteTag: string | undefined, tags: Tag[]): boolean {
+  if (!noteTag) return false;
+  const tag = tags.find((t) => t.name.toLowerCase() === noteTag.toLowerCase());
+  if (!tag) return false;
+  if (tag.archived === true) return true;
+  if (tag.parentId) {
+    const parentTag = tags.find((t) => t.id === tag.parentId);
+    if (parentTag && parentTag.archived === true) return true;
+  }
+  return false;
+}
 
 /**
  * Reduce la saturación de un color HEX o RGB manteniendo el tono y brillo

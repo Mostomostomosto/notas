@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, Tag, AppEvent, seedInitialData } from './db/db';
+import { db, Note, Tag, AppEvent, seedInitialData, isNoteArchived } from './db/db';
 import { Sidebar, SidebarFilter } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteDetail } from './components/NoteDetail';
@@ -281,7 +281,7 @@ export const App: React.FC = () => {
     const matchingNotes = notes.filter((n) => {
       if (filter.type === 'trash') return n.deleted === true;
       if (n.deleted === true) return false;
-      if (filter.type === 'pinned') return n.pinned === true;
+      if (filter.type === 'pinned') return n.pinned === true && !isNoteArchived(n.tag, tags);
       if (filter.type === 'tag') {
         const noteTag = (n.tag || '').toLowerCase();
         return (
@@ -289,7 +289,7 @@ export const App: React.FC = () => {
           childTagNames.includes(noteTag)
         );
       }
-      return true; // 'all'
+      return !isNoteArchived(n.tag, tags); // 'all'
     });
 
     if (matchingNotes.length > 0) {

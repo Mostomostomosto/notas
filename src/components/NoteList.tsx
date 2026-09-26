@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, Tag } from '../db/db';
+import { db, Note, Tag, isNoteArchived } from '../db/db';
 import { SidebarFilter } from './Sidebar';
-import { Search, Plus, Pin, FileText, Image as ImageIcon } from 'lucide-react';
+import { Search, Plus, Pin, FileText, Image as ImageIcon, Archive } from 'lucide-react';
 
 interface NoteListProps {
   currentFilter: SidebarFilter;
@@ -30,7 +30,7 @@ export const NoteList: React.FC<NoteListProps> = ({
     if (note.deleted === true) return false;
 
     if (currentFilter.type === 'pinned') {
-      return note.pinned === true;
+      return note.pinned === true && !isNoteArchived(note.tag, tags);
     }
     if (currentFilter.type === 'tag') {
       const childTagNames = tags
@@ -42,7 +42,7 @@ export const NoteList: React.FC<NoteListProps> = ({
         childTagNames.includes(noteTag)
       );
     }
-    return true; // 'all'
+    return !isNoteArchived(note.tag, tags); // 'all'
   });
 
   // Filtrar por texto de búsqueda (título y contenido de bloques)
@@ -128,6 +128,11 @@ export const NoteList: React.FC<NoteListProps> = ({
     return 'Todas las notas';
   };
 
+  const currentTag = currentFilter.type === 'tag' ? tags.find((t) => t.id === currentFilter.tagId) : null;
+  const isCurrentTagArchived = currentTag?.archived === true;
+  const parentTag = currentTag?.parentId ? tags.find((t) => t.id === currentTag.parentId) : null;
+  const isParentArchived = parentTag?.archived === true;
+
   return (
     <div className="w-80 bg-white border-r border-[#E4DECE] flex flex-col h-full min-w-0">
       {/* Header */}
@@ -140,6 +145,56 @@ export const NoteList: React.FC<NoteListProps> = ({
             {searchResults.length} {searchResults.length === 1 ? 'nota' : 'notas'}
           </span>
         </div>
+
+        {/* Banner de etiqueta archivada */}
+        {isCurrentTagArchived && (
+          <div className="mb-2.5 p-2.5 bg-[#EDEAE2] border border-[#E4DECE] rounded-lg flex items-center justify-between gap-2 shadow-2xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <Archive className="w-4 h-4 text-[#8A8478] shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#2B2A28] block truncate">
+                  Etiqueta archivada
+                </span>
+                <span className="text-[10px] text-[#8A8478] block truncate">
+                  Oculta de "Todas las notas"
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                await db.tags.update(currentTag.id, { archived: false });
+              }}
+              className="px-2.5 py-1 bg-[#3F6E64] hover:bg-[#345951] text-[#F7F4EE] rounded-md text-xs font-semibold shrink-0 cursor-pointer transition-colors shadow-xs"
+            >
+              Desarchivar
+            </button>
+          </div>
+        )}
+        {!isCurrentTagArchived && isParentArchived && parentTag && (
+          <div className="mb-2.5 p-2.5 bg-[#EDEAE2] border border-[#E4DECE] rounded-lg flex items-center justify-between gap-2 shadow-2xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <Archive className="w-4 h-4 text-[#8A8478] shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#2B2A28] block truncate">
+                  Padre "{parentTag.name}" archivado
+                </span>
+                <span className="text-[10px] text-[#8A8478] block truncate">
+                  Oculta por pertenecer a una etiqueta archivada
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                await db.tags.update(parentTag.id, { archived: false });
+              }}
+              className="px-2.5 py-1 bg-[#3F6E64] hover:bg-[#345951] text-[#F7F4EE] rounded-md text-xs font-semibold shrink-0 cursor-pointer transition-colors shadow-xs"
+            >
+              Desarchivar {parentTag.name}
+            </button>
+          </div>
+        )}
 
         {/* Search input */}
         <div className="flex items-center gap-2 bg-[#F7F4EE] border border-[#E4DECE] rounded-lg px-2.5 py-1.5 mb-2.5 focus-within:border-[#3F6E64] transition-colors">
