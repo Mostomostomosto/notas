@@ -287,12 +287,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title="Menú de información"
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-[#3F6E64] text-[#F7F4EE] flex items-center justify-center font-bold text-sm shadow-sm shrink-0">
-              N
-            </div>
+            <img
+              src="/def-ico.png"
+              alt="Bitácora"
+              className="w-7 h-7 rounded-lg object-contain shadow-xs shrink-0"
+            />
             <div className="min-w-0">
               <span className="font-bold text-sm tracking-tight text-[#2B2A28] block leading-none">
-                Mis Notas
+                Bitácora
               </span>
               <span className="text-[10px] text-[#8A8478] block mt-0.5 font-normal">
                 Uso personal

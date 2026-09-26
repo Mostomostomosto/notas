@@ -54,7 +54,7 @@ function proxyAuthRequest(req, res) {
   proxyReq.on('error', (err) => {
     console.error('Error forwarding auth request to Vercel:', err);
     res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'No se pudo contactar el servidor de autenticación' }));
+    res.end(JSON.stringify({ error: 'No se pudo contactar el servidor de autenticaciï¿½n' }));
   });
 
   req.pipe(proxyReq);
@@ -134,7 +134,7 @@ function createWindow() {
     height: 760,
     minWidth: 460,
     minHeight: 560,
-    title: 'Notas',
+    title: 'BitÃ¡cora',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
     autoHideMenuBar: true,
     show: false,
@@ -152,7 +152,7 @@ function createWindow() {
   mainWindow.webContents.setUserAgent(cleanUa);
   session.defaultSession.setUserAgent(cleanUa);
 
-  // Menú contextual nativo con Deshacer, Rehacer, Cortar, Copiar, Pegar y Seleccionar todo
+  // Menï¿½ contextual nativo con Deshacer, Rehacer, Cortar, Copiar, Pegar y Seleccionar todo
   mainWindow.webContents.on('context-menu', (_event, params) => {
     const menu = new Menu();
 

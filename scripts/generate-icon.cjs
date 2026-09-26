@@ -4,7 +4,9 @@ const mod = require('png-to-ico');
 const pngToIco = mod.default || mod;
 
 const rootDir = path.resolve(__dirname, '..');
-const srcPng = path.join(rootDir, 'ico-notas.png');
+const srcPng = fs.existsSync(path.join(rootDir, 'def-ico.png'))
+  ? path.join(rootDir, 'def-ico.png')
+  : path.join(rootDir, 'ico-notas.png');
 const outDir = path.join(rootDir, 'build');
 const outIco = path.join(outDir, 'icon.ico');
 

@@ -1,7 +1,7 @@
 {
-  "name": "Notas — App Personal",
-  "short_name": "Notas",
-  "description": "App de notas personal offline-first con sincronización en Google Drive",
+  "name": "Bitácora — App Personal",
+  "short_name": "Bitácora",
+  "description": "App de notas y calendario personal offline-first con sincronización en Google Drive",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F7F4EE",
@@ -9,7 +9,7 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/ico-notas.png",
+      "src": "/def-ico.png",
       "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any maskable"

@@ -353,9 +353,16 @@ export const App: React.FC = () => {
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <span className="font-semibold text-xs">
-                {currentFilter.type === 'calendar' ? 'Calendario' : 'Mis Notas'}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <img
+                  src="/def-ico.png"
+                  alt="Bitácora"
+                  className="w-4 h-4 rounded object-contain shrink-0"
+                />
+                <span className="font-semibold text-xs">
+                  {currentFilter.type === 'calendar' ? 'Calendario' : 'Bitácora'}
+                </span>
+              </div>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[#8A8478]">
               <button
