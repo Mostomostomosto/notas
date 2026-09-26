@@ -96,6 +96,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return notes.filter((n) => !n.deleted && n.tag && names.includes(n.tag.toLowerCase())).length;
   };
 
+  const validateCanBeParent = (targetParentId: string): boolean => {
+    const parentTag = tags.find((t) => t.id === targetParentId);
+    if (!parentTag) return true;
+    if (parentTag.parentId) {
+      alert('Esta etiqueta ya es una subetiqueta y no puede tener hijas propias.');
+      return false;
+    }
+    return true;
+  };
+
   const openContextMenu = (
     e: React.MouseEvent,
     type: 'tag' | 'trash',
@@ -114,6 +124,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (e) e.preventDefault();
     if (!newTagName.trim()) return;
     const cleanName = newTagName.trim();
+
+    if (newTagParentId) {
+      if (!validateCanBeParent(newTagParentId)) {
+        setNewTagParentId('');
+        return;
+      }
+    }
+
     const tagId = newTagParentId
       ? `${newTagParentId}-${cleanName.toLowerCase().replace(/\s+/g, '-')}`
       : cleanName.toLowerCase().replace(/\s+/g, '-');
@@ -139,6 +157,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ) => {
     if (e) e.preventDefault();
     if (!subtagName.trim()) return;
+
+    if (!validateCanBeParent(parentId)) {
+      setAddingSubtagForId(null);
+      setSubtagName('');
+      return;
+    }
+
     const cleanName = subtagName.trim();
     const subId = `${parentId}-${cleanName.toLowerCase().replace(/\s+/g, '-')}`;
     await db.tags.put({
@@ -161,6 +186,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         color: tagToMove.color,
       });
     } else {
+      if (!validateCanBeParent(newParentId)) return;
+      const hasChildren = tags.some((t) => t.parentId === tagToMove.id);
+      if (hasChildren) {
+        alert('Esta etiqueta tiene subetiquetas y no puede convertirse en subetiqueta de otra.');
+        return;
+      }
       const parentTag = tags.find((t) => t.id === newParentId);
       if (!parentTag) return;
       await db.tags.put({
@@ -640,6 +671,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             tabIndex={0}
                             onClick={(e) => {
                               e.stopPropagation();
+                              alert('Esta etiqueta ya es una subetiqueta y no puede tener hijas propias.');
+                            }}
+                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                              childActive
+                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                            }`}
+                            title={`Añadir subetiqueta a ${child.name}`}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
                               openContextMenu(e, 'tag', child);
                             }}
                             className={`p-0.5 rounded transition-opacity cursor-pointer ${
@@ -695,18 +742,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   value={newTagParentId}
                   onChange={(e) => {
                     const pid = e.target.value;
-                    setNewTagParentId(pid);
-                    if (pid) {
-                      const p = tags.find((t) => t.id === pid);
-                      if (p) setNewTagColor(p.color);
+                    if (!pid) {
+                      setNewTagParentId('');
+                      return;
                     }
+                    if (!validateCanBeParent(pid)) {
+                      setNewTagParentId('');
+                      return;
+                    }
+                    setNewTagParentId(pid);
+                    const p = tags.find((t) => t.id === pid);
+                    if (p) setNewTagColor(p.color);
                   }}
                   className="w-full text-xs px-1.5 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] text-[#2B2A28] outline-none cursor-pointer"
                 >
                   <option value="">Principal (sin padre)</option>
-                  {rootTags.filter((rt) => rt.id !== 'sin-etiqueta').map((rt) => (
-                    <option key={rt.id} value={rt.id}>Subetiqueta de {rt.name}</option>
-                  ))}
+                  {tags
+                    .filter((t) => t.id !== 'sin-etiqueta')
+                    .map((t) => {
+                      const isSub = !!t.parentId;
+                      return (
+                        <option key={t.id} value={t.id}>
+                          {isSub ? `  ↳ ${t.name} (subetiqueta)` : `Subetiqueta de ${t.name}`}
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 
@@ -896,6 +956,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
+                  {/* Si es hija: Intento de añadir subetiqueta a ella misma */}
+                  {!isRoot && (
+                    <button
+                      onClick={() => {
+                        setContextMenu(null);
+                        alert('Esta etiqueta ya es una subetiqueta y no puede tener hijas propias.');
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <CornerDownRight className="w-3.5 h-3.5 text-[#8A8478]" />
+                      <span>Añadir subetiqueta</span>
+                    </button>
+                  )}
+
                   {/* Si es raíz y hay otras etiquetas principales: Mover dentro de otra etiqueta */}
                   {isRoot && contextMenu.tag.id !== 'sin-etiqueta' && otherRoots.length > 0 && (
                     <button
@@ -997,21 +1071,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
               Selecciona la etiqueta principal de la cual será subetiqueta:
             </p>
             <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
-              {rootTags
-                .filter((rt) => rt.id !== movingTag.id && rt.id !== 'sin-etiqueta')
-                .map((rt) => (
-                  <button
-                    key={rt.id}
-                    onClick={() => handleMoveTag(movingTag, rt.id)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-[#F7F4EE] border border-transparent hover:border-[#E4DECE] text-left cursor-pointer transition-colors"
-                  >
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
-                      style={{ backgroundColor: rt.color }}
-                    />
-                    <span className="font-medium text-xs">{rt.name}</span>
-                  </button>
-                ))}
+              {tags
+                .filter((t) => t.id !== movingTag.id && t.id !== 'sin-etiqueta')
+                .map((t) => {
+                  const isSub = !!t.parentId;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        if (isSub) {
+                          alert('Esta etiqueta ya es una subetiqueta y no puede tener hijas propias.');
+                          return;
+                        }
+                        handleMoveTag(movingTag, t.id);
+                      }}
+                      className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg hover:bg-[#F7F4EE] border border-transparent hover:border-[#E4DECE] text-left cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <span className="font-medium text-xs">{t.name}</span>
+                      </div>
+                      {isSub && (
+                        <span className="text-[10px] text-[#8A8478] italic">Subetiqueta</span>
+                      )}
+                    </button>
+                  );
+                })}
             </div>
             <div className="flex justify-end">
               <button
