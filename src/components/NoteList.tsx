@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Note } from '../db/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, Note, Tag } from '../db/db';
 import { SidebarFilter } from './Sidebar';
 import { Search, Plus, Pin, FileText, Image as ImageIcon } from 'lucide-react';
 
@@ -19,6 +20,7 @@ export const NoteList: React.FC<NoteListProps> = ({
   onCreateNote,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const tags = useLiveQuery(() => db.tags.toArray()) || [];
 
   // Filtrar notas según el sidebar actual
   const filteredByView = notes.filter((note) => {
@@ -31,7 +33,14 @@ export const NoteList: React.FC<NoteListProps> = ({
       return note.pinned === true;
     }
     if (currentFilter.type === 'tag') {
-      return note.tag.toLowerCase() === currentFilter.tagName.toLowerCase();
+      const childTagNames = tags
+        .filter((t: Tag) => t.parentId === currentFilter.tagId)
+        .map((t: Tag) => t.name.toLowerCase());
+      const noteTag = (note.tag || '').toLowerCase();
+      return (
+        noteTag === currentFilter.tagName.toLowerCase() ||
+        childTagNames.includes(noteTag)
+      );
     }
     return true; // 'all'
   });

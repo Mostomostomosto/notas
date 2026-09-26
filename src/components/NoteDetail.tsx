@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, NoteBlock, ChecklistItem, ChecklistBlock, Tag } from '../db/db';
+import { db, Note, NoteBlock, ChecklistItem, ChecklistBlock, Tag, desaturateColor } from '../db/db';
 import { scheduleSync } from '../services/syncEngine';
 import {
   Pin,
@@ -605,20 +605,39 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               </button>
 
               {/* Dropdown de etiquetas */}
-              <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[140px]">
-                {tags.map((t: Tag) => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleSelectTag(t.name)}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left"
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: t.color }}
-                    />
-                    <span>{t.name}</span>
-                  </button>
-                ))}
+              <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[150px] max-h-64 overflow-y-auto">
+                {tags
+                  .filter((t: Tag) => !t.parentId)
+                  .map((parentTag: Tag) => {
+                    const children = tags.filter((t: Tag) => t.parentId === parentTag.id);
+                    return (
+                      <div key={parentTag.id}>
+                        <button
+                          onClick={() => handleSelectTag(parentTag.name)}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: parentTag.color }}
+                          />
+                          <span className="font-medium">{parentTag.name}</span>
+                        </button>
+                        {children.map((child: Tag) => (
+                          <button
+                            key={child.id}
+                            onClick={() => handleSelectTag(child.name)}
+                            className="w-full flex items-center gap-2 pl-6 pr-2.5 py-1 text-[11.5px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
+                          >
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{ backgroundColor: desaturateColor(child.color) }}
+                            />
+                            <span>{child.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -752,7 +771,11 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             <span className="flex items-center gap-1.5 bg-[#F7F4EE] border border-[#E4DECE] px-2.5 py-0.5 rounded-full font-medium text-[11px] text-[#2B2A28]">
               <span
                 className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: activeTag?.color || '#8A8478' }}
+                style={{
+                  backgroundColor: activeTag?.parentId
+                    ? desaturateColor(activeTag.color)
+                    : (activeTag?.color || '#8A8478'),
+                }}
               />
               {localNote.tag}
             </span>
@@ -938,9 +961,16 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 </button>
                 <button
                   onClick={() => handleAddBlock('checklist')}
-                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28]"
+                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] cursor-pointer"
                 >
                   + Checklist
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
+                  <span>+ Imagen</span>
                 </button>
               </div>
             </div>

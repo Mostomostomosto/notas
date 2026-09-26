@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Tag } from '../db/db';
-import { SyncState } from '../services/syncEngine';
+import { db, Tag, desaturateColor } from '../db/db';
+import { SyncState, scheduleSync } from '../services/syncEngine';
 import { UserProfile } from '../services/googleAuth';
 import {
   FileText,
@@ -17,6 +17,8 @@ import {
   ShieldCheck,
   ExternalLink,
   Settings,
+  MoreVertical,
+  CornerDownRight,
 } from 'lucide-react';
 
 export type SidebarFilter =
@@ -55,6 +57,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newTagColor, setNewTagColor] = useState('#3F6E64');
   const [isLogoMenuOpen, setIsLogoMenuOpen] = useState(false);
 
+  // Estados para subetiquetas y menús contextuales
+  interface ContextMenuInfo {
+    x: number;
+    y: number;
+    type: 'tag' | 'trash';
+    tag?: Tag;
+  }
+  const [contextMenu, setContextMenu] = useState<ContextMenuInfo | null>(null);
+  const [addingSubtagForId, setAddingSubtagForId] = useState<string | null>(null);
+  const [subtagName, setSubtagName] = useState('');
+
   // Queries reactivas con Dexie
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const notes = useLiveQuery(() => db.notes.toArray()) || [];
@@ -63,8 +76,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pinnedCount = notes.filter((n) => !n.deleted && n.pinned).length;
   const trashCount = notes.filter((n) => n.deleted).length;
 
-  const getTagCount = (tagName: string) => {
-    return notes.filter((n) => !n.deleted && n.tag.toLowerCase() === tagName.toLowerCase()).length;
+  const rootTags = tags.filter((t: Tag) => !t.parentId);
+  const getChildTags = (parentId: string) => tags.filter((t: Tag) => t.parentId === parentId);
+
+  const getExactTagCount = (tagName: string) => {
+    return notes.filter((n) => !n.deleted && n.tag && n.tag.toLowerCase() === tagName.toLowerCase()).length;
+  };
+
+  const getTagCount = (tag: Tag) => {
+    const childTags = tags.filter((t) => t.parentId === tag.id);
+    const names = [tag.name.toLowerCase(), ...childTags.map((c) => c.name.toLowerCase())];
+    return notes.filter((n) => !n.deleted && n.tag && names.includes(n.tag.toLowerCase())).length;
+  };
+
+  const openContextMenu = (
+    e: React.MouseEvent,
+    type: 'tag' | 'trash',
+    tag?: Tag
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuWidth = 190;
+    const menuHeight = 110;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+    setContextMenu({ x, y, type, tag });
   };
 
   const handleCreateTag = async (e: React.FormEvent) => {
@@ -78,6 +114,80 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
     setNewTagName('');
     setIsAddingTag(false);
+  };
+
+  const handleCreateSubtag = async (parentId: string, parentColor: string, e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subtagName.trim()) return;
+    const subId = `${parentId}-${subtagName.toLowerCase().trim().replace(/\s+/g, '-')}`;
+    await db.tags.put({
+      id: subId,
+      name: subtagName.trim(),
+      color: parentColor,
+      parentId: parentId,
+    });
+    setSubtagName('');
+    setAddingSubtagForId(null);
+  };
+
+  const handleDeleteTag = async (tagToDelete: Tag) => {
+    setContextMenu(null);
+    const isRoot = !tagToDelete.parentId;
+    const childTags = isRoot ? tags.filter((t) => t.parentId === tagToDelete.id) : [];
+    const tagNamesToClear = [tagToDelete.name.toLowerCase(), ...childTags.map((c) => c.name.toLowerCase())];
+
+    const affectedNotes = notes.filter(
+      (n) => n.tag && tagNamesToClear.includes(n.tag.toLowerCase())
+    );
+
+    const confirmMsg = childTags.length > 0
+      ? `¿Eliminar la etiqueta "${tagToDelete.name}" y sus ${childTags.length} subetiqueta(s)? Las ${affectedNotes.length} nota(s) pasarán a "Sin etiqueta".`
+      : `¿Eliminar la etiqueta "${tagToDelete.name}"? Las ${affectedNotes.length} nota(s) pasarán a "Sin etiqueta".`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    // 1. Reasignar notas a "Sin etiqueta" y marcar como pendientes para sincronizar con Drive
+    const now = new Date().toISOString();
+    for (const note of affectedNotes) {
+      await db.notes.update(note.id, {
+        tag: 'Sin etiqueta',
+        updatedAt: now,
+        syncStatus: 'pending',
+      });
+    }
+
+    // 2. Eliminar etiquetas de la base de datos
+    const idsToDelete = [tagToDelete.id, ...childTags.map((c) => c.id)];
+    await db.tags.bulkDelete(idsToDelete);
+
+    // 3. Si el filtro actual es una de las etiquetas eliminadas, resetear a 'all'
+    if (
+      currentFilter.type === 'tag' &&
+      idsToDelete.includes(currentFilter.tagId)
+    ) {
+      onSelectFilter({ type: 'all' });
+    }
+
+    // 4. Sincronizar si hay sesión activa
+    if (token) {
+      scheduleSync(token);
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    setContextMenu(null);
+    const trashedNotes = notes.filter((n) => n.deleted);
+    if (trashedNotes.length === 0) return;
+
+    if (
+      !window.confirm(
+        `¿Seguro que deseas vaciar la papelera? Se eliminarán definitivamente ${trashedNotes.length} nota(s).`
+      )
+    ) {
+      return;
+    }
+
+    await db.notes.bulkDelete(trashedNotes.map((n) => n.id));
   };
 
   const isFilterActive = (filter: SidebarFilter) => {
@@ -233,7 +343,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={() => onSelectFilter({ type: 'trash' })}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+            onContextMenu={(e) => openContextMenu(e, 'trash')}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
               isFilterActive({ type: 'trash' })
                 ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                 : 'hover:bg-black/5 text-[#2B2A28]'
@@ -243,15 +354,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Trash2 className="w-4 h-4 opacity-80" />
               <span>Papelera</span>
             </div>
-            <span
-              className={`text-[11px] px-1.5 py-0.2 rounded-full ${
-                isFilterActive({ type: 'trash' })
-                  ? 'bg-white/20 text-white'
-                  : 'text-[#8A8478]'
-              }`}
-            >
-              {trashCount}
-            </span>
+            <div className="flex items-center gap-1">
+              {trashCount > 0 && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openContextMenu(e, 'trash');
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-black/10 transition-opacity cursor-pointer"
+                  title="Opciones de papelera"
+                >
+                  <MoreVertical className="w-3 h-3 text-[#8A8478]" />
+                </span>
+              )}
+              <span
+                className={`text-[11px] px-1.5 py-0.2 rounded-full ${
+                  isFilterActive({ type: 'trash' })
+                    ? 'bg-white/20 text-white'
+                    : 'text-[#8A8478]'
+                }`}
+              >
+                {trashCount}
+              </span>
+            </div>
           </button>
         </div>
 
@@ -263,7 +390,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </span>
             <button
               onClick={() => setIsAddingTag(true)}
-              className="text-[#8A8478] hover:text-[#2B2A28] p-0.5 rounded transition-colors"
+              className="text-[#8A8478] hover:text-[#2B2A28] p-0.5 rounded transition-colors cursor-pointer"
               title="Nueva etiqueta"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -271,49 +398,180 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
 
           <div className="space-y-1">
-            {tags.map((tag: Tag) => {
+            {rootTags.map((rootTag: Tag) => {
               const active = isFilterActive({
                 type: 'tag',
-                tagId: tag.id,
-                tagName: tag.name,
+                tagId: rootTag.id,
+                tagName: rootTag.name,
               });
-              const count = getTagCount(tag.name);
+              const count = getTagCount(rootTag);
+              const childTags = getChildTags(rootTag.id);
+
               return (
-                <button
-                  key={tag.id}
-                  onClick={() =>
-                    onSelectFilter({
-                      type: 'tag',
-                      tagId: tag.id,
-                      tagName: tag.name,
-                    })
-                  }
-                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    active
-                      ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                      : 'hover:bg-black/5 text-[#2B2A28]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    <span className="truncate">{tag.name}</span>
-                  </div>
-                  <span
-                    className={`text-[11px] ${
-                      active ? 'text-white/80' : 'text-[#8A8478]'
+                <div key={rootTag.id} className="space-y-0.5">
+                  <div
+                    onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
+                    onClick={() =>
+                      onSelectFilter({
+                        type: 'tag',
+                        tagId: rootTag.id,
+                        tagName: rootTag.name,
+                      })
+                    }
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
+                      active
+                        ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                        : 'hover:bg-black/5 text-[#2B2A28]'
                     }`}
                   >
-                    {count}
-                  </span>
-                </button>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                        style={{ backgroundColor: rootTag.color }}
+                      />
+                      <span className="truncate">{rootTag.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {rootTag.id !== 'sin-etiqueta' && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openContextMenu(e, 'tag', rootTag);
+                          }}
+                          className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                            active
+                              ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                              : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                          }`}
+                          title="Opciones de etiqueta"
+                        >
+                          <MoreVertical className="w-3 h-3" />
+                        </span>
+                      )}
+                      <span
+                        className={`text-[11px] ${
+                          active ? 'text-white/80' : 'text-[#8A8478]'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Formulario para añadir subetiqueta */}
+                  {addingSubtagForId === rootTag.id && (
+                    <form
+                      onSubmit={(e) => handleCreateSubtag(rootTag.id, rootTag.color, e)}
+                      className="ml-6 mr-1 my-1 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs"
+                    >
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: desaturateColor(rootTag.color) }}
+                        />
+                        <span className="text-[10px] text-[#8A8478] font-medium">
+                          Subetiqueta de {rootTag.name}
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={subtagName}
+                        onChange={(e) => setSubtagName(e.target.value)}
+                        placeholder="Nombre subetiqueta"
+                        autoFocus
+                        className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
+                      />
+                      <div className="flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddingSubtagForId(null);
+                            setSubtagName('');
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28]"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium"
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Subetiquetas hijas (anidadas) */}
+                  {childTags.map((child: Tag) => {
+                    const childActive = isFilterActive({
+                      type: 'tag',
+                      tagId: child.id,
+                      tagName: child.name,
+                    });
+                    const childCount = getExactTagCount(child.name);
+                    const desaturatedBg = desaturateColor(child.color);
+
+                    return (
+                      <div
+                        key={child.id}
+                        onContextMenu={(e) => openContextMenu(e, 'tag', child)}
+                        onClick={() =>
+                          onSelectFilter({
+                            type: 'tag',
+                            tagId: child.id,
+                            tagName: child.name,
+                          })
+                        }
+                        className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
+                          childActive
+                            ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                            : 'hover:bg-black/5 text-[#2B2A28]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0 shadow-xs"
+                            style={{ backgroundColor: desaturatedBg }}
+                          />
+                          <span className="truncate">{child.name}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openContextMenu(e, 'tag', child);
+                            }}
+                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                              childActive
+                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                            }`}
+                            title="Opciones de subetiqueta"
+                          >
+                            <MoreVertical className="w-3 h-3" />
+                          </span>
+                          <span
+                            className={`text-[10.5px] ${
+                              childActive ? 'text-white/80' : 'text-[#8A8478]'
+                            }`}
+                          >
+                            {childCount}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               );
             })}
           </div>
 
-          {/* Formulario rápido para añadir etiqueta */}
+          {/* Formulario rápido para añadir etiqueta raíz */}
           {isAddingTag && (
             <form onSubmit={handleCreateTag} className="mt-2 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs">
               <input
@@ -448,6 +706,94 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
       </div>
+
+      {/* Context Menu Popup */}
+      {contextMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-50 bg-transparent"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu(null);
+            }}
+          />
+          <div
+            className="fixed z-50 bg-white border border-[#E4DECE] rounded-xl shadow-xl py-1.5 px-1 min-w-[170px] text-xs text-[#2B2A28]"
+            style={{
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+            }}
+          >
+            {contextMenu.type === 'tag' && contextMenu.tag && (
+              <>
+                <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1 flex items-center gap-1.5 truncate">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{
+                      backgroundColor: contextMenu.tag.parentId
+                        ? desaturateColor(contextMenu.tag.color)
+                        : contextMenu.tag.color,
+                    }}
+                  />
+                  <span className="truncate">{contextMenu.tag.name}</span>
+                </div>
+
+                {!contextMenu.tag.parentId && contextMenu.tag.id !== 'sin-etiqueta' && (
+                  <button
+                    onClick={() => {
+                      const tagId = contextMenu.tag!.id;
+                      setContextMenu(null);
+                      setAddingSubtagForId(tagId);
+                      setSubtagName('');
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                  >
+                    <CornerDownRight className="w-3.5 h-3.5 text-[#3F6E64]" />
+                    <span>Añadir subetiqueta</span>
+                  </button>
+                )}
+
+                {contextMenu.tag.id !== 'sin-etiqueta' ? (
+                  <button
+                    onClick={() => handleDeleteTag(contextMenu.tag!)}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#B4553F]/10 text-[#B4553F] transition-colors text-left cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {contextMenu.tag.parentId ? 'Eliminar subetiqueta' : 'Eliminar etiqueta'}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="px-2.5 py-1 text-[11px] text-[#8A8478] italic">
+                    Etiqueta del sistema
+                  </div>
+                )}
+              </>
+            )}
+
+            {contextMenu.type === 'trash' && (
+              <>
+                <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1">
+                  Papelera ({trashCount})
+                </div>
+                <button
+                  onClick={handleEmptyTrash}
+                  disabled={trashCount === 0}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors text-left ${
+                    trashCount === 0
+                      ? 'opacity-40 cursor-not-allowed text-[#8A8478]'
+                      : 'hover:bg-[#B4553F]/10 text-[#B4553F] cursor-pointer'
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Vaciar papelera</span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 };

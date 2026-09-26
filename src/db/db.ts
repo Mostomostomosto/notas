@@ -54,6 +54,7 @@ export interface Tag {
   id: string;
   name: string;
   color: string;
+  parentId?: string;
 }
 
 export interface SyncQueueItem {
@@ -75,10 +76,54 @@ export class NotasDatabase extends Dexie {
       tags: 'id, name',
       syncQueue: '++id, noteId, action, queuedAt',
     });
+    this.version(2).stores({
+      tags: 'id, name, parentId',
+    });
   }
 }
 
 export const db = new NotasDatabase();
+
+/**
+ * Reduce la saturación de un color HEX o RGB manteniendo el tono y brillo
+ */
+export function desaturateColor(hexOrRgb: string, saturationRatio = 0.45): string {
+  if (!hexOrRgb) return '#8A8478';
+  let hex = hexOrRgb.replace('#', '').trim();
+  if (hex.length === 3) {
+    hex = hex.split('').map((c) => c + c).join('');
+  }
+  const num = parseInt(hex, 16);
+  if (isNaN(num)) return hexOrRgb;
+  const r = (num >> 16) / 255;
+  const g = ((num >> 8) & 0xff) / 255;
+  const b = (num & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      case b:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+  const newS = Math.round(s * saturationRatio * 100);
+  const newH = Math.round(h * 360);
+  const newL = Math.round(l * 100);
+  return `hsl(${newH}, ${newS}%, ${newL}%)`;
+}
 
 /**
  * Inicializa etiquetas por defecto y notas de bienvenida si la base de datos está vacía
