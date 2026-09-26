@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, seedInitialData } from './db/db';
+import { db, Note, Tag, seedInitialData } from './db/db';
 import { Sidebar, SidebarFilter } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteDetail } from './components/NoteDetail';
@@ -39,8 +39,9 @@ export const App: React.FC = () => {
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('Sincronizado');
 
-  // Consulta reactiva de todas las notas en Dexie
+  // Consulta reactiva de todas las notas y etiquetas en Dexie
   const notes = useLiveQuery(() => db.notes.orderBy('updatedAt').reverse().toArray()) || [];
+  const tags = useLiveQuery(() => db.tags.toArray()) || [];
 
   // Inicializar base de datos y Google Identity al montar
   useEffect(() => {
@@ -237,6 +238,39 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [lastDeletedNote, token]);
 
+  // Cambiar filtro y seleccionar automáticamente la nota más reciente de esa nueva etiqueta/vista
+  const handleSelectFilter = (filter: SidebarFilter) => {
+    setCurrentFilter(filter);
+    setIsMobileSidebarOpen(false);
+
+    const childTagNames =
+      filter.type === 'tag'
+        ? tags
+            .filter((t: Tag) => t.parentId === filter.tagId)
+            .map((t: Tag) => t.name.toLowerCase())
+        : [];
+
+    const matchingNotes = notes.filter((n) => {
+      if (filter.type === 'trash') return n.deleted === true;
+      if (n.deleted === true) return false;
+      if (filter.type === 'pinned') return n.pinned === true;
+      if (filter.type === 'tag') {
+        const noteTag = (n.tag || '').toLowerCase();
+        return (
+          noteTag === filter.tagName.toLowerCase() ||
+          childTagNames.includes(noteTag)
+        );
+      }
+      return true; // 'all'
+    });
+
+    if (matchingNotes.length > 0) {
+      setSelectedNoteId(matchingNotes[0].id);
+    } else {
+      setSelectedNoteId(null);
+    }
+  };
+
   // Nota actualmente seleccionada
   const activeNote = notes.find((n) => n.id === selectedNoteId) || null;
 
@@ -250,10 +284,7 @@ export const App: React.FC = () => {
       >
         <Sidebar
           currentFilter={currentFilter}
-          onSelectFilter={(filter) => {
-            setCurrentFilter(filter);
-            setIsMobileSidebarOpen(false);
-          }}
+          onSelectFilter={handleSelectFilter}
           syncState={syncState}
           syncMessage={syncMessage}
           onTriggerSync={handleTriggerSync}

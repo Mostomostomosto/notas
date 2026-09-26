@@ -19,6 +19,8 @@ import {
   Settings,
   MoreVertical,
   CornerDownRight,
+  ArrowLeft,
+  FolderInput,
 } from 'lucide-react';
 
 export type SidebarFilter =
@@ -55,6 +57,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3F6E64');
+  const [newTagParentId, setNewTagParentId] = useState('');
   const [isLogoMenuOpen, setIsLogoMenuOpen] = useState(false);
 
   // Estados para subetiquetas y menús contextuales
@@ -67,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [contextMenu, setContextMenu] = useState<ContextMenuInfo | null>(null);
   const [addingSubtagForId, setAddingSubtagForId] = useState<string | null>(null);
   const [subtagName, setSubtagName] = useState('');
+  const [movingTag, setMovingTag] = useState<Tag | null>(null);
 
   // Queries reactivas con Dexie
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
@@ -97,37 +101,72 @@ export const Sidebar: React.FC<SidebarProps> = ({
     e.preventDefault();
     e.stopPropagation();
     const menuWidth = 190;
-    const menuHeight = 110;
+    const menuHeight = 130;
     const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
     const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
     setContextMenu({ x, y, type, tag });
   };
 
-  const handleCreateTag = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateTag = async (e?: React.FormEvent | React.KeyboardEvent) => {
+    if (e) e.preventDefault();
     if (!newTagName.trim()) return;
-    const tagId = newTagName.toLowerCase().trim().replace(/\s+/g, '-');
+    const cleanName = newTagName.trim();
+    const tagId = newTagParentId
+      ? `${newTagParentId}-${cleanName.toLowerCase().replace(/\s+/g, '-')}`
+      : cleanName.toLowerCase().replace(/\s+/g, '-');
+
+    const parentTag = newTagParentId ? tags.find((t) => t.id === newTagParentId) : null;
+    const finalColor = parentTag ? parentTag.color : newTagColor;
+
     await db.tags.put({
       id: tagId,
-      name: newTagName.trim(),
-      color: newTagColor,
+      name: cleanName,
+      color: finalColor,
+      ...(newTagParentId ? { parentId: newTagParentId } : {}),
     });
     setNewTagName('');
+    setNewTagParentId('');
     setIsAddingTag(false);
   };
 
-  const handleCreateSubtag = async (parentId: string, parentColor: string, e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateSubtag = async (
+    parentId: string,
+    parentColor: string,
+    e?: React.FormEvent | React.KeyboardEvent
+  ) => {
+    if (e) e.preventDefault();
     if (!subtagName.trim()) return;
-    const subId = `${parentId}-${subtagName.toLowerCase().trim().replace(/\s+/g, '-')}`;
+    const cleanName = subtagName.trim();
+    const subId = `${parentId}-${cleanName.toLowerCase().replace(/\s+/g, '-')}`;
     await db.tags.put({
       id: subId,
-      name: subtagName.trim(),
+      name: cleanName,
       color: parentColor,
       parentId: parentId,
     });
     setSubtagName('');
     setAddingSubtagForId(null);
+  };
+
+  const handleMoveTag = async (tagToMove: Tag, newParentId: string | null) => {
+    setContextMenu(null);
+    setMovingTag(null);
+    if (!newParentId) {
+      await db.tags.put({
+        id: tagToMove.id,
+        name: tagToMove.name,
+        color: tagToMove.color,
+      });
+    } else {
+      const parentTag = tags.find((t) => t.id === newParentId);
+      if (!parentTag) return;
+      await db.tags.put({
+        id: tagToMove.id,
+        name: tagToMove.name,
+        color: parentTag.color,
+        parentId: newParentId,
+      });
+    }
   };
 
   const handleDeleteTag = async (tagToDelete: Tag) => {
@@ -433,22 +472,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                     <div className="flex items-center gap-1">
                       {rootTag.id !== 'sin-etiqueta' && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openContextMenu(e, 'tag', rootTag);
-                          }}
-                          className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                            active
-                              ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                              : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                          }`}
-                          title="Opciones de etiqueta"
-                        >
-                          <MoreVertical className="w-3 h-3" />
-                        </span>
+                        <>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAddingSubtagForId(rootTag.id);
+                              setSubtagName('');
+                            }}
+                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                              active
+                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                            }`}
+                            title={`Añadir subetiqueta a ${rootTag.name}`}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openContextMenu(e, 'tag', rootTag);
+                            }}
+                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                              active
+                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                            }`}
+                            title="Opciones de etiqueta"
+                          >
+                            <MoreVertical className="w-3 h-3" />
+                          </span>
+                        </>
                       )}
                       <span
                         className={`text-[11px] ${
@@ -472,14 +530,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           style={{ backgroundColor: desaturateColor(rootTag.color) }}
                         />
                         <span className="text-[10px] text-[#8A8478] font-medium">
-                          Subetiqueta de {rootTag.name}
+                          Nueva subetiqueta de {rootTag.name}
                         </span>
                       </div>
                       <input
                         type="text"
                         value={subtagName}
                         onChange={(e) => setSubtagName(e.target.value)}
-                        placeholder="Nombre subetiqueta"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleCreateSubtag(rootTag.id, rootTag.color, e);
+                          } else if (e.key === 'Escape') {
+                            setAddingSubtagForId(null);
+                            setSubtagName('');
+                          }
+                        }}
+                        placeholder="Nombre subetiqueta (Enter para guardar)"
                         autoFocus
                         className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
                       />
@@ -490,13 +557,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             setAddingSubtagForId(null);
                             setSubtagName('');
                           }}
-                          className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28]"
+                          className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28] cursor-pointer"
                         >
                           Cancelar
                         </button>
                         <button
                           type="submit"
-                          className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium"
+                          className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium cursor-pointer"
                         >
                           Guardar
                         </button>
@@ -571,42 +638,82 @@ export const Sidebar: React.FC<SidebarProps> = ({
             })}
           </div>
 
-          {/* Formulario rápido para añadir etiqueta raíz */}
+          {/* Formulario rápido para añadir etiqueta */}
           {isAddingTag && (
             <form onSubmit={handleCreateTag} className="mt-2 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs">
               <input
                 type="text"
                 value={newTagName}
                 onChange={(e) => setNewTagName(e.target.value)}
-                placeholder="Nombre etiqueta"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCreateTag(e);
+                  } else if (e.key === 'Escape') {
+                    setIsAddingTag(false);
+                    setNewTagName('');
+                    setNewTagParentId('');
+                  }
+                }}
+                placeholder="Nombre etiqueta (Enter para guardar)"
                 autoFocus
                 className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
               />
-              <div className="flex items-center justify-between gap-1">
-                <div className="flex items-center gap-1">
-                  {['#3F6E64', '#B4553F', '#C98A3D', '#5B7DB1', '#7A68A6'].map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      onClick={() => setNewTagColor(color)}
-                      className={`w-4 h-4 rounded-full border ${
-                        newTagColor === color ? 'ring-2 ring-[#2B2A28]' : 'border-black/10'
-                      }`}
-                      style={{ backgroundColor: color }}
-                    />
+
+              <div className="mb-2">
+                <label className="text-[10px] text-[#8A8478] block mb-0.5">Pertenece a:</label>
+                <select
+                  value={newTagParentId}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    setNewTagParentId(pid);
+                    if (pid) {
+                      const p = tags.find((t) => t.id === pid);
+                      if (p) setNewTagColor(p.color);
+                    }
+                  }}
+                  className="w-full text-xs px-1.5 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] text-[#2B2A28] outline-none cursor-pointer"
+                >
+                  <option value="">Principal (sin padre)</option>
+                  {rootTags.filter((rt) => rt.id !== 'sin-etiqueta').map((rt) => (
+                    <option key={rt.id} value={rt.id}>Subetiqueta de {rt.name}</option>
                   ))}
-                </div>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between gap-1">
+                {!newTagParentId ? (
+                  <div className="flex items-center gap-1">
+                    {['#3F6E64', '#B4553F', '#C98A3D', '#5B7DB1', '#7A68A6'].map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setNewTagColor(color)}
+                        className={`w-4 h-4 rounded-full border ${
+                          newTagColor === color ? 'ring-2 ring-[#2B2A28]' : 'border-black/10'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[10px] text-[#8A8478] italic">Color heredado</span>
+                )}
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    onClick={() => setIsAddingTag(false)}
-                    className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28]"
+                    onClick={() => {
+                      setIsAddingTag(false);
+                      setNewTagName('');
+                      setNewTagParentId('');
+                    }}
+                    className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28] cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium"
+                    className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium cursor-pointer"
                   >
                     Guardar
                   </button>
@@ -725,52 +832,101 @@ export const Sidebar: React.FC<SidebarProps> = ({
               top: `${contextMenu.y}px`,
             }}
           >
-            {contextMenu.type === 'tag' && contextMenu.tag && (
-              <>
-                <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1 flex items-center gap-1.5 truncate">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{
-                      backgroundColor: contextMenu.tag.parentId
-                        ? desaturateColor(contextMenu.tag.color)
-                        : contextMenu.tag.color,
-                    }}
-                  />
-                  <span className="truncate">{contextMenu.tag.name}</span>
-                </div>
+            {contextMenu.type === 'tag' && contextMenu.tag && (() => {
+              const isRoot = !contextMenu.tag.parentId;
+              const parentTag = !isRoot ? tags.find((t) => t.id === contextMenu.tag!.parentId) : null;
+              const otherRoots = rootTags.filter((rt) => rt.id !== contextMenu.tag!.id && rt.id !== 'sin-etiqueta');
 
-                {!contextMenu.tag.parentId && contextMenu.tag.id !== 'sin-etiqueta' && (
-                  <button
-                    onClick={() => {
-                      const tagId = contextMenu.tag!.id;
-                      setContextMenu(null);
-                      setAddingSubtagForId(tagId);
-                      setSubtagName('');
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
-                  >
-                    <CornerDownRight className="w-3.5 h-3.5 text-[#3F6E64]" />
-                    <span>Añadir subetiqueta</span>
-                  </button>
-                )}
-
-                {contextMenu.tag.id !== 'sin-etiqueta' ? (
-                  <button
-                    onClick={() => handleDeleteTag(contextMenu.tag!)}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#B4553F]/10 text-[#B4553F] transition-colors text-left cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>
-                      {contextMenu.tag.parentId ? 'Eliminar subetiqueta' : 'Eliminar etiqueta'}
-                    </span>
-                  </button>
-                ) : (
-                  <div className="px-2.5 py-1 text-[11px] text-[#8A8478] italic">
-                    Etiqueta del sistema
+              return (
+                <>
+                  <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1 flex items-center gap-1.5 truncate">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: contextMenu.tag.parentId
+                          ? desaturateColor(contextMenu.tag.color)
+                          : contextMenu.tag.color,
+                      }}
+                    />
+                    <span className="truncate">{contextMenu.tag.name}</span>
                   </div>
-                )}
-              </>
-            )}
+
+                  {/* Si es raíz: Añadir subetiqueta */}
+                  {isRoot && contextMenu.tag.id !== 'sin-etiqueta' && (
+                    <button
+                      onClick={() => {
+                        const tagId = contextMenu.tag!.id;
+                        setContextMenu(null);
+                        setAddingSubtagForId(tagId);
+                        setSubtagName('');
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <CornerDownRight className="w-3.5 h-3.5 text-[#3F6E64]" />
+                      <span>Añadir subetiqueta</span>
+                    </button>
+                  )}
+
+                  {/* Si es raíz y hay otras etiquetas principales: Mover dentro de otra etiqueta */}
+                  {isRoot && contextMenu.tag.id !== 'sin-etiqueta' && otherRoots.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setMovingTag(contextMenu.tag!);
+                        setContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <FolderInput className="w-3.5 h-3.5 text-[#8A8478]" />
+                      <span>Hacer subetiqueta de...</span>
+                    </button>
+                  )}
+
+                  {/* Si es hija: Añadir otra subetiqueta al mismo padre */}
+                  {!isRoot && parentTag && (
+                    <button
+                      onClick={() => {
+                        const parentId = contextMenu.tag!.parentId!;
+                        setContextMenu(null);
+                        setAddingSubtagForId(parentId);
+                        setSubtagName('');
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-[#3F6E64]" />
+                      <span>Añadir subetiqueta a {parentTag.name}</span>
+                    </button>
+                  )}
+
+                  {/* Si es hija: Convertir en etiqueta principal */}
+                  {!isRoot && (
+                    <button
+                      onClick={() => handleMoveTag(contextMenu.tag!, null)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5 text-[#8A8478]" />
+                      <span>Convertir en principal</span>
+                    </button>
+                  )}
+
+                  {/* Eliminar etiqueta */}
+                  {contextMenu.tag.id !== 'sin-etiqueta' ? (
+                    <button
+                      onClick={() => handleDeleteTag(contextMenu.tag!)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#B4553F]/10 text-[#B4553F] transition-colors text-left cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>
+                        {contextMenu.tag.parentId ? 'Eliminar subetiqueta' : 'Eliminar etiqueta'}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="px-2.5 py-1 text-[11px] text-[#8A8478] italic">
+                      Etiqueta del sistema
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {contextMenu.type === 'trash' && (
               <>
@@ -793,6 +949,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
         </>
+      )}
+
+      {/* Modal para mover etiqueta dentro de otra */}
+      {movingTag && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setMovingTag(null)}
+        >
+          <div
+            className="bg-white border border-[#E4DECE] rounded-2xl shadow-2xl p-4 w-full max-w-xs text-xs text-[#2B2A28]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="font-semibold text-sm mb-1 text-[#2B2A28]">
+              Mover "{movingTag.name}"
+            </h4>
+            <p className="text-[#8A8478] mb-3 text-[11px]">
+              Selecciona la etiqueta principal de la cual será subetiqueta:
+            </p>
+            <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
+              {rootTags
+                .filter((rt) => rt.id !== movingTag.id && rt.id !== 'sin-etiqueta')
+                .map((rt) => (
+                  <button
+                    key={rt.id}
+                    onClick={() => handleMoveTag(movingTag, rt.id)}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-[#F7F4EE] border border-transparent hover:border-[#E4DECE] text-left cursor-pointer transition-colors"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                      style={{ backgroundColor: rt.color }}
+                    />
+                    <span className="font-medium text-xs">{rt.name}</span>
+                  </button>
+                ))}
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setMovingTag(null)}
+                className="px-3 py-1.5 rounded-lg border border-[#E4DECE] text-[#8A8478] hover:text-[#2B2A28] text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </aside>
   );
