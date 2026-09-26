@@ -21,9 +21,11 @@ import {
   CornerDownRight,
   ArrowLeft,
   FolderInput,
+  Calendar as CalendarIcon,
 } from 'lucide-react';
 
 export type SidebarFilter =
+  | { type: 'calendar' }
   | { type: 'all' }
   | { type: 'pinned' }
   | { type: 'trash' }
@@ -75,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Queries reactivas con Dexie
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const notes = useLiveQuery(() => db.notes.toArray()) || [];
+  const events = useLiveQuery(() => db.events.filter((e) => !e.deleted).toArray()) || [];
 
   const allNotesCount = notes.filter((n) => !n.deleted).length;
   const pinnedCount = notes.filter((n) => !n.deleted && n.pinned).length;
@@ -230,6 +233,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const isFilterActive = (filter: SidebarFilter) => {
+    if (currentFilter.type === 'calendar' && filter.type === 'calendar') return true;
     if (currentFilter.type === 'all' && filter.type === 'all') return true;
     if (currentFilter.type === 'pinned' && filter.type === 'pinned') return true;
     if (currentFilter.type === 'trash' && filter.type === 'trash') return true;
@@ -334,6 +338,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
         {/* System Views */}
         <div className="space-y-1">
+          <button
+            onClick={() => onSelectFilter({ type: 'calendar' })}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+              isFilterActive({ type: 'calendar' })
+                ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+                : 'hover:bg-black/5 text-[#2B2A28]'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <CalendarIcon className="w-4 h-4 opacity-80" />
+              <span>Calendario</span>
+            </div>
+            {events.length > 0 && (
+              <span
+                className={`text-[11px] px-1.5 py-0.2 rounded-full ${
+                  isFilterActive({ type: 'calendar' })
+                    ? 'bg-white/20 text-white'
+                    : 'text-[#8A8478]'
+                }`}
+              >
+                {events.length}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => onSelectFilter({ type: 'all' })}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${

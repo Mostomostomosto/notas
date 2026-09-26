@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, Tag, seedInitialData } from './db/db';
+import { db, Note, Tag, AppEvent, seedInitialData } from './db/db';
 import { Sidebar, SidebarFilter } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteDetail } from './components/NoteDetail';
+import { CalendarView } from './components/CalendarView';
+import { CalendarDetail } from './components/CalendarDetail';
+import { EventModal } from './components/EventModal';
+import { getTodayISO } from './utils/calendarUtils';
 import {
   initGoogleAuth,
   requestLogin,
@@ -29,6 +33,12 @@ export const App: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
 
+  // Estados para Calendario
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTodayISO());
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [eventToEdit, setEventToEdit] = useState<AppEvent | null>(null);
+  const [modalDefaultDate, setModalDefaultDate] = useState<string>(() => getTodayISO());
+
   // Estados para Deshacer eliminación de nota
   const [lastDeletedNote, setLastDeletedNote] = useState<Note | null>(null);
   const [deleteToastTimeout, setDeleteToastTimeout] = useState<number | null>(null);
@@ -39,9 +49,10 @@ export const App: React.FC = () => {
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('Sincronizado');
 
-  // Consulta reactiva de todas las notas y etiquetas en Dexie
+  // Consulta reactiva de todas las notas, etiquetas y eventos en Dexie
   const notes = useLiveQuery(() => db.notes.orderBy('updatedAt').reverse().toArray()) || [];
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
+  const events = useLiveQuery(() => db.events.filter((e) => !e.deleted).toArray()) || [];
 
   // Inicializar base de datos y Google Identity al montar
   useEffect(() => {
@@ -238,10 +249,27 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [lastDeletedNote, token]);
 
+  // Manejadores para eventos de Calendario
+  const handleOpenNewEvent = (dateStr?: string) => {
+    setEventToEdit(null);
+    setModalDefaultDate(dateStr || selectedDate);
+    setIsEventModalOpen(true);
+  };
+
+  const handleEditEvent = (event: AppEvent) => {
+    setEventToEdit(event);
+    setModalDefaultDate(event.date);
+    setIsEventModalOpen(true);
+  };
+
   // Cambiar filtro y seleccionar automáticamente la nota más reciente de esa nueva etiqueta/vista
   const handleSelectFilter = (filter: SidebarFilter) => {
     setCurrentFilter(filter);
     setIsMobileSidebarOpen(false);
+
+    if (filter.type === 'calendar') {
+      return;
+    }
 
     const childTagNames =
       filter.type === 'tag'
@@ -304,13 +332,17 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* 2. Columna Intermedia: Lista de notas */}
+      {/* 2. Columna Intermedia: Lista de notas o Calendario */}
       <div
         className={`h-full border-r border-[#E4DECE] flex-shrink-0 ${
-          selectedNoteId ? 'hidden md:flex' : 'flex w-full md:w-80'
+          currentFilter.type === 'calendar'
+            ? 'flex w-full md:w-[480px] lg:w-[520px]'
+            : selectedNoteId
+            ? 'hidden md:flex'
+            : 'flex w-full md:w-80'
         }`}
       >
-        <div className="w-full flex flex-col h-full">
+        <div className="w-full flex flex-col h-full min-w-0">
           {/* Barra superior en móvil para abrir menú y ajustes */}
           <div className="md:hidden p-3 border-b border-[#E4DECE] bg-[#EDEAE2] flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -321,7 +353,9 @@ export const App: React.FC = () => {
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <span className="font-semibold text-xs">Mis Notas</span>
+              <span className="font-semibold text-xs">
+                {currentFilter.type === 'calendar' ? 'Calendario' : 'Mis Notas'}
+              </span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[#8A8478]">
               <button
@@ -331,54 +365,82 @@ export const App: React.FC = () => {
               >
                 <Settings className="w-3.5 h-3.5" />
               </button>
-              <a href="/privacidad.html" target="_blank" rel="noopener noreferrer" className="hover:underline">
-                Privacidad
-              </a>
-              <span>·</span>
-              <a href="/terminos.html" target="_blank" rel="noopener noreferrer" className="hover:underline">
-                Términos
-              </a>
             </div>
           </div>
 
           <div className="flex-1 min-h-0">
-            <NoteList
-              currentFilter={currentFilter}
-              notes={notes}
-              selectedNoteId={selectedNoteId}
-              onSelectNote={(noteId) => setSelectedNoteId(noteId)}
-              onCreateNote={handleCreateNote}
-            />
+            {currentFilter.type === 'calendar' ? (
+              <CalendarView
+                selectedDate={selectedDate}
+                onSelectDate={(newDate) => setSelectedDate(newDate)}
+                events={events}
+                onOpenNewEvent={handleOpenNewEvent}
+                onEditEvent={handleEditEvent}
+              />
+            ) : (
+              <NoteList
+                currentFilter={currentFilter}
+                notes={notes}
+                selectedNoteId={selectedNoteId}
+                onSelectNote={(noteId) => setSelectedNoteId(noteId)}
+                onCreateNote={handleCreateNote}
+              />
+            )}
           </div>
         </div>
       </div>
 
-      {/* 3. Columna Derecha: Detalle / Editor de la nota */}
+      {/* 3. Columna Derecha: Detalle / Editor de nota O Detalle del día de Calendario */}
       <div
         className={`flex-1 h-full flex flex-col bg-white min-w-0 ${
-          !selectedNoteId ? 'hidden md:flex' : 'flex'
+          currentFilter.type === 'calendar'
+            ? 'hidden md:flex'
+            : !selectedNoteId
+            ? 'hidden md:flex'
+            : 'flex'
         }`}
       >
-        {/* Botón de volver en móvil (estilo Apple Notas en iPhone) */}
-        <div className="md:hidden px-4 py-2 border-b border-[#E4DECE] bg-[#F7F4EE] flex items-center gap-2">
-          <button
-            onClick={() => setSelectedNoteId(null)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-[#3F6E64] py-1 px-2 rounded hover:bg-black/5"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Notas</span>
-          </button>
-        </div>
-
-        <div className="flex-1 min-h-0">
-          <NoteDetail
-            key={activeNote?.id || 'empty'}
-            note={activeNote}
+        {currentFilter.type === 'calendar' ? (
+          <CalendarDetail
+            selectedDate={selectedDate}
+            events={events}
             token={token}
-            onNoteDeleted={handleNoteDeleted}
+            onOpenNewEvent={handleOpenNewEvent}
+            onEditEvent={handleEditEvent}
           />
-        </div>
+        ) : (
+          <>
+            {/* Botón de volver en móvil (estilo Apple Notas en iPhone) */}
+            <div className="md:hidden px-4 py-2 border-b border-[#E4DECE] bg-[#F7F4EE] flex items-center gap-2">
+              <button
+                onClick={() => setSelectedNoteId(null)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-[#3F6E64] py-1 px-2 rounded hover:bg-black/5"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Notas</span>
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0">
+              <NoteDetail
+                key={activeNote?.id || 'empty'}
+                note={activeNote}
+                token={token}
+                onNoteDeleted={handleNoteDeleted}
+              />
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Modal para Crear / Editar Evento de Calendario */}
+      <EventModal
+        isOpen={isEventModalOpen}
+        onClose={() => setIsEventModalOpen(false)}
+        eventToEdit={eventToEdit}
+        defaultDate={modalDefaultDate}
+        token={token}
+      />
 
       {/* Toast Flotante de Deshacer eliminación de nota */}
       {lastDeletedNote && (

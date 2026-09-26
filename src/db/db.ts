@@ -68,6 +68,22 @@ export interface Tag {
   parentId?: string;
 }
 
+export type EventRepeat = 'none' | 'monthly' | 'yearly';
+
+export interface AppEvent {
+  id: string;
+  title: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  time?: string; // HH:mm or undefined/empty for all-day
+  repeat: EventRepeat;
+  createdAt: string;
+  updatedAt: string;
+  driveFileId?: string;
+  syncStatus?: 'synced' | 'pending' | 'syncing' | 'error';
+  deleted?: boolean;
+}
+
 export interface SyncQueueItem {
   id?: number;
   noteId: string;
@@ -79,6 +95,7 @@ export class NotasDatabase extends Dexie {
   notes!: Table<Note, string>;
   tags!: Table<Tag, string>;
   syncQueue!: Table<SyncQueueItem, number>;
+  events!: Table<AppEvent, string>;
 
   constructor() {
     super('AppNotasPersonalDB');
@@ -89,6 +106,9 @@ export class NotasDatabase extends Dexie {
     });
     this.version(2).stores({
       tags: 'id, name, parentId',
+    });
+    this.version(3).stores({
+      events: 'id, date, repeat, deleted, updatedAt, createdAt, syncStatus, driveFileId',
     });
   }
 }
@@ -140,6 +160,7 @@ export function desaturateColor(hexOrRgb: string, saturationRatio = 0.45): strin
  * Inicializa etiquetas por defecto y notas de bienvenida si la base de datos está vacía
  */
 export async function seedInitialData() {
+  const now = new Date().toISOString();
   const tagsCount = await db.tags.count();
   if (tagsCount === 0) {
     await db.tags.bulkAdd([
@@ -153,7 +174,6 @@ export async function seedInitialData() {
 
   const notesCount = await db.notes.count();
   if (notesCount === 0) {
-    const now = new Date().toISOString();
     await db.notes.bulkAdd([
       {
         id: 'note_compra',
@@ -228,5 +248,22 @@ export async function seedInitialData() {
         ],
       },
     ]);
+  }
+
+  const eventsCount = await db.events.count();
+  if (eventsCount === 0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    await db.events.add({
+      id: `event_sample_1`,
+      title: 'Cena con Marta',
+      description: 'Reservar mesa en el restaurante de la plaza',
+      date: todayStr,
+      time: '20:30',
+      repeat: 'none',
+      createdAt: now,
+      updatedAt: now,
+      syncStatus: 'pending',
+      deleted: false,
+    });
   }
 }
