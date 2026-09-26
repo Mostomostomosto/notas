@@ -14,13 +14,31 @@ import {
   RotateCcw,
   Check,
   X,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 
 interface NoteDetailProps {
   note: Note | null;
   token: string | null;
-  onNoteDeleted?: () => void;
+  onNoteDeleted?: (deletedNote: Note) => void;
 }
+
+interface NoteSnapshot {
+  title: string;
+  tag: string;
+  pinned: boolean;
+  deleted: boolean;
+  blocks: NoteBlock[];
+}
+
+const createSnapshot = (n: Note): NoteSnapshot => ({
+  title: n.title,
+  tag: n.tag,
+  pinned: n.pinned,
+  deleted: n.deleted,
+  blocks: JSON.parse(JSON.stringify(n.blocks)),
+});
 
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +137,167 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     }
   }, [focusItemId]);
 
+  // Historial de cambios para Deshacer / Rehacer (Undo / Redo)
+  const pastRef = useRef<NoteSnapshot[]>([]);
+  const futureRef = useRef<NoteSnapshot[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const typingBaselineRef = useRef<NoteSnapshot | null>(null);
+  const typingTimerRef = useRef<number | null>(null);
+
+  // Reiniciar historial al cambiar de nota
+  const currentNoteIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (note?.id !== currentNoteIdRef.current) {
+      currentNoteIdRef.current = note?.id || null;
+      pastRef.current = [];
+      futureRef.current = [];
+      typingBaselineRef.current = null;
+      if (typingTimerRef.current) {
+        window.clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+      setCanUndo(false);
+      setCanRedo(false);
+    }
+  }, [note?.id]);
+
+  // Guardar instantánea antes de una acción discreta (añadir bloque, eliminar bloque, fijar, etc.)
+  const pushDiscreteSnapshot = () => {
+    if (!localNote) return;
+    if (typingBaselineRef.current) {
+      pastRef.current.push(typingBaselineRef.current);
+      typingBaselineRef.current = null;
+      if (typingTimerRef.current) {
+        window.clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+    }
+    pastRef.current.push(createSnapshot(localNote));
+    if (pastRef.current.length > 50) pastRef.current.shift();
+    futureRef.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+  };
+
+  // Registrar inicio de tecleo para agrupar palabras en el historial
+  const registerTypingChange = () => {
+    if (!localNote) return;
+    if (!typingBaselineRef.current) {
+      typingBaselineRef.current = createSnapshot(localNote);
+    }
+    if (typingTimerRef.current) {
+      window.clearTimeout(typingTimerRef.current);
+    }
+    typingTimerRef.current = window.setTimeout(() => {
+      if (typingBaselineRef.current) {
+        pastRef.current.push(typingBaselineRef.current);
+        if (pastRef.current.length > 50) pastRef.current.shift();
+        futureRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+        typingBaselineRef.current = null;
+      }
+      typingTimerRef.current = null;
+    }, 700);
+  };
+
+  const handleUndo = () => {
+    if (!localNote) return;
+    if (typingTimerRef.current) {
+      window.clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    if (typingBaselineRef.current) {
+      pastRef.current.push(typingBaselineRef.current);
+      typingBaselineRef.current = null;
+    }
+
+    if (pastRef.current.length === 0) return;
+
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    pendingSaveRef.current = null;
+
+    const currentSnapshot = createSnapshot(localNote);
+    futureRef.current.push(currentSnapshot);
+    if (futureRef.current.length > 50) futureRef.current.shift();
+
+    const prevSnapshot = pastRef.current.pop()!;
+    const restored: Note = {
+      ...localNote,
+      title: prevSnapshot.title,
+      tag: prevSnapshot.tag,
+      pinned: prevSnapshot.pinned,
+      deleted: prevSnapshot.deleted,
+      blocks: prevSnapshot.blocks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setLocalNote(restored);
+    saveChangesImmediate(restored);
+
+    setCanUndo(pastRef.current.length > 0);
+    setCanRedo(true);
+  };
+
+  const handleRedo = () => {
+    if (!localNote || futureRef.current.length === 0) return;
+
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    pendingSaveRef.current = null;
+
+    const currentSnapshot = createSnapshot(localNote);
+    pastRef.current.push(currentSnapshot);
+    if (pastRef.current.length > 50) pastRef.current.shift();
+
+    const nextSnapshot = futureRef.current.pop()!;
+    const restored: Note = {
+      ...localNote,
+      title: nextSnapshot.title,
+      tag: nextSnapshot.tag,
+      pinned: nextSnapshot.pinned,
+      deleted: nextSnapshot.deleted,
+      blocks: nextSnapshot.blocks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setLocalNote(restored);
+    saveChangesImmediate(restored);
+
+    setCanUndo(true);
+    setCanRedo(futureRef.current.length > 0);
+  };
+
+  const handleUndoRef = useRef(handleUndo);
+  handleUndoRef.current = handleUndo;
+  const handleRedoRef = useRef(handleRedo);
+  handleRedoRef.current = handleRedo;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (localNote?.deleted) return;
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      if (!isCtrlOrCmd) return;
+
+      if (!e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndoRef.current();
+      } else if (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z')) {
+        e.preventDefault();
+        handleRedoRef.current();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [localNote?.deleted]);
+
   if (!localNote) {
     return (
       <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 text-[#8A8478]">
@@ -133,6 +312,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Toggle fijar / desfijar
   const handleTogglePin = () => {
+    pushDiscreteSnapshot();
     const updated: Note = {
       ...localNote,
       pinned: !localNote.pinned,
@@ -143,6 +323,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Cambiar etiqueta
   const handleSelectTag = (tagName: string) => {
+    pushDiscreteSnapshot();
     const updated: Note = {
       ...localNote,
       tag: tagName,
@@ -161,7 +342,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     };
     await saveChangesImmediate(updated);
     if (isDeleting) {
-      onNoteDeleted?.();
+      onNoteDeleted?.(updated);
     }
   };
 
@@ -173,12 +354,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
       pendingSaveRef.current = null;
       await db.notes.delete(localNote.id);
-      onNoteDeleted?.();
+      onNoteDeleted?.(localNote);
     }
   };
 
   // Cambiar título (actualización síncrona en localNote para mantener el cursor en su sitio)
   const handleTitleChange = (newTitle: string) => {
+    registerTypingChange();
     const updated: Note = {
       ...localNote,
       title: newTitle,
@@ -190,6 +372,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Manipulación de bloques
   const handleAddBlock = (type: 'heading' | 'text' | 'checklist') => {
+    pushDiscreteSnapshot();
     const newBlockId = `b_${Date.now()}`;
     let newBlock: NoteBlock;
 
@@ -216,6 +399,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleUpdateBlockContent = (blockId: string, newContent: string) => {
+    registerTypingChange();
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && (b.type === 'heading' || b.type === 'text')) {
         return { ...b, content: newContent };
@@ -232,6 +416,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleDeleteBlock = (blockId: string) => {
+    pushDiscreteSnapshot();
     const updated: Note = {
       ...localNote,
       blocks: localNote.blocks.filter((b) => b.id !== blockId),
@@ -242,6 +427,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Manipulación de items de checklist
   const handleToggleCheckItem = (blockId: string, itemIndex: number) => {
+    pushDiscreteSnapshot();
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = [...b.items];
@@ -266,6 +452,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     itemIndex: number,
     newText: string
   ) => {
+    registerTypingChange();
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
         const newItems = [...b.items];
@@ -284,6 +471,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleAddCheckItem = (blockId: string, afterIndex?: number) => {
+    pushDiscreteSnapshot();
     const newId = `c_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'checklist') {
@@ -312,6 +500,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleDeleteCheckItem = (blockId: string, itemIndex: number) => {
+    pushDiscreteSnapshot();
     const targetBlock = localNote.blocks.find(
       (b) => b.id === blockId && b.type === 'checklist'
     ) as ChecklistBlock | undefined;
@@ -342,6 +531,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     const file = e.target.files?.[0];
     if (!file) return;
 
+    pushDiscreteSnapshot();
     const reader = new FileReader();
     reader.onload = () => {
       const localUrl = reader.result as string;
@@ -363,6 +553,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   const handleUpdateCaption = (blockId: string, newCaption: string) => {
+    registerTypingChange();
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'image') {
         return { ...b, caption: newCaption };
@@ -464,40 +655,74 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
       {/* Block Toolbar */}
       {!localNote.deleted && (
-        <div className="px-8 py-2 bg-[#F7F4EE]/60 border-b border-[#E4DECE] flex items-center gap-1">
-          <button
-            onClick={() => handleAddBlock('heading')}
-            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
-          >
-            <Heading className="w-3.5 h-3.5 text-[#8A8478]" />
-            <span>Encabezado</span>
-          </button>
+        <div className="px-4 sm:px-8 py-2 bg-[#F7F4EE]/60 border-b border-[#E4DECE] flex items-center justify-between gap-2 overflow-x-auto">
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={() => handleAddBlock('heading')}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+            >
+              <Heading className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Encabezado</span>
+            </button>
 
-          <button
-            onClick={() => handleAddBlock('text')}
-            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
-          >
-            <Type className="w-3.5 h-3.5 text-[#8A8478]" />
-            <span>Texto</span>
-          </button>
+            <button
+              onClick={() => handleAddBlock('text')}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+            >
+              <Type className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Texto</span>
+            </button>
 
-          <button
-            onClick={() => handleAddBlock('checklist')}
-            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
-          >
-            <CheckSquare className="w-3.5 h-3.5 text-[#8A8478]" />
-            <span>Lista</span>
-          </button>
+            <button
+              onClick={() => handleAddBlock('checklist')}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Lista</span>
+            </button>
 
-          <div className="w-[1px] h-4 bg-[#E4DECE] mx-1" />
+            <div className="w-[1px] h-4 bg-[#E4DECE] mx-1" />
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
-            <span>Imagen</span>
-          </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Imagen</span>
+            </button>
+          </div>
+
+          {/* Undo / Redo controls */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={!canUndo}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all ${
+                canUndo
+                  ? 'text-[#2B2A28] hover:bg-white border border-transparent hover:border-[#E4DECE] cursor-pointer'
+                  : 'text-[#8A8478]/30 cursor-not-allowed border border-transparent'
+              }`}
+              title="Deshacer (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Deshacer</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={!canRedo}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-all ${
+                canRedo
+                  ? 'text-[#2B2A28] hover:bg-white border border-transparent hover:border-[#E4DECE] cursor-pointer'
+                  : 'text-[#8A8478]/30 cursor-not-allowed border border-transparent'
+              }`}
+              title="Rehacer (Ctrl+Y)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Rehacer</span>
+            </button>
+          </div>
 
           <input
             ref={fileInputRef}

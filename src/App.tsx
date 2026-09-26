@@ -17,16 +17,21 @@ import {
 import {
   subscribeSyncState,
   runFullSync,
+  scheduleSync,
   SyncState,
 } from './services/syncEngine';
 import { PreferencesModal } from './components/PreferencesModal';
-import { ArrowLeft, Menu, Settings } from 'lucide-react';
+import { ArrowLeft, Menu, Settings, RotateCcw, Trash2, X } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [currentFilter, setCurrentFilter] = useState<SidebarFilter>({ type: 'all' });
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+
+  // Estados para Deshacer eliminación de nota
+  const [lastDeletedNote, setLastDeletedNote] = useState<Note | null>(null);
+  const [deleteToastTimeout, setDeleteToastTimeout] = useState<number | null>(null);
 
   // Estados de autenticación y sincronización con Google Drive
   const [token, setToken] = useState<string | null>(null);
@@ -171,6 +176,67 @@ export const App: React.FC = () => {
     setSelectedNoteId(newId);
   };
 
+  // Manejador al eliminar una nota (guarda referencia para poder deshacer)
+  const handleNoteDeleted = (deletedNote: Note) => {
+    setLastDeletedNote(deletedNote);
+    if (deleteToastTimeout) {
+      window.clearTimeout(deleteToastTimeout);
+    }
+    const timer = window.setTimeout(() => {
+      setLastDeletedNote(null);
+    }, 7000);
+    setDeleteToastTimeout(timer);
+
+    if (isDesktop) {
+      const remaining = notes.filter((n) => !n.deleted && n.id !== deletedNote.id);
+      setSelectedNoteId(remaining.length > 0 ? remaining[0].id : null);
+    } else {
+      setSelectedNoteId(null);
+    }
+  };
+
+  // Restaurar la última nota eliminada
+  const handleUndoDeleteNote = async () => {
+    if (!lastDeletedNote) return;
+    if (deleteToastTimeout) {
+      window.clearTimeout(deleteToastTimeout);
+      setDeleteToastTimeout(null);
+    }
+    const noteToRestore = lastDeletedNote;
+    setLastDeletedNote(null);
+
+    await db.notes.update(noteToRestore.id, {
+      deleted: false,
+      updatedAt: new Date().toISOString(),
+      syncStatus: 'pending',
+    });
+
+    setSelectedNoteId(noteToRestore.id);
+    scheduleSync(token);
+  };
+
+  // Atajo de teclado global Ctrl+Z para deshacer eliminación cuando no se edita texto
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const activeEl = document.activeElement;
+        const isEditingInput =
+          activeEl &&
+          (activeEl.tagName === 'INPUT' ||
+            activeEl.tagName === 'TEXTAREA' ||
+            activeEl.getAttribute('contenteditable') === 'true');
+
+        if (!isEditingInput && lastDeletedNote) {
+          e.preventDefault();
+          handleUndoDeleteNote();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [lastDeletedNote, token]);
+
   // Nota actualmente seleccionada
   const activeNote = notes.find((n) => n.id === selectedNoteId) || null;
 
@@ -278,17 +344,37 @@ export const App: React.FC = () => {
             key={activeNote?.id || 'empty'}
             note={activeNote}
             token={token}
-            onNoteDeleted={() => {
-              if (isDesktop) {
-                const remaining = notes.filter((n) => !n.deleted && n.id !== selectedNoteId);
-                setSelectedNoteId(remaining.length > 0 ? remaining[0].id : null);
-              } else {
-                setSelectedNoteId(null);
-              }
-            }}
+            onNoteDeleted={handleNoteDeleted}
           />
         </div>
       </div>
+
+      {/* Toast Flotante de Deshacer eliminación de nota */}
+      {lastDeletedNote && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-[#2B2A28] text-white px-4 py-2.5 rounded-xl shadow-2xl border border-white/10 text-sm select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Trash2 className="w-4 h-4 text-[#C98A3D] flex-shrink-0" />
+          <span className="truncate max-w-[200px] sm:max-w-xs font-medium">
+            Nota «{lastDeletedNote.title || 'Sin título'}» eliminada
+          </span>
+          <button
+            onClick={handleUndoDeleteNote}
+            className="flex items-center gap-1.5 font-semibold text-[#8FD5C3] hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg transition-colors cursor-pointer ml-1"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Deshacer</span>
+          </button>
+          <button
+            onClick={() => {
+              if (deleteToastTimeout) window.clearTimeout(deleteToastTimeout);
+              setLastDeletedNote(null);
+            }}
+            className="p-1 text-white/50 hover:text-white rounded-md transition-colors cursor-pointer"
+            title="Cerrar aviso"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Modal de Preferencias y Google Drive */}
       <PreferencesModal
