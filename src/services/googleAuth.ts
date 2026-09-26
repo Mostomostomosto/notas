@@ -73,6 +73,45 @@ export async function waitForGoogleScript(timeoutMs = 6000): Promise<boolean> {
   return true;
 }
 
+const VERCEL_BACKEND = 'https://notas-theta-sandy.vercel.app';
+
+async function fetchAuth(endpoint: string, bodyObj: any) {
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyObj),
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && contentType.includes('application/json')) {
+      return await res.json();
+    }
+    if (res.status === 404 || contentType.includes('text/html')) {
+      throw new Error('Endpoint local no disponible');
+    }
+    const err = await res.json().catch(() => ({}));
+    const errorObj: any = new Error(err.error_description || err.error || 'Error en autenticación');
+    errorObj.data = err;
+    throw errorObj;
+  } catch (err: any) {
+    if (!endpoint.startsWith('http')) {
+      const fallbackRes = await fetch(`${VERCEL_BACKEND}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyObj),
+      });
+      if (!fallbackRes.ok) {
+        const fallbackErr = await fallbackRes.json().catch(() => ({}));
+        const errorObj: any = new Error(fallbackErr.error_description || fallbackErr.error || 'Error en autenticación');
+        errorObj.data = fallbackErr;
+        throw errorObj;
+      }
+      return await fallbackRes.json();
+    }
+    throw err;
+  }
+}
+
 /**
  * Intercambia el código de autorización obtenido en el popup por tokens permanentes
  */
@@ -82,18 +121,7 @@ async function exchangeCodeForTokens(code: string): Promise<{
   expires_in: number;
   scope?: string;
 }> {
-  const res = await fetch('/api/auth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error_description || err.error || 'Error al intercambiar código de Google');
-  }
-
-  return await res.json();
+  return await fetchAuth('/api/auth/token', { code });
 }
 
 /**
@@ -106,23 +134,7 @@ export async function refreshAccessToken(): Promise<string | null> {
   }
 
   try {
-    const res = await fetch('/api/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn('Error al renovar token en backend:', err);
-      if (err.error === 'invalid_grant') {
-        // Si el usuario revocó el acceso desde su cuenta de Google
-        logout();
-      }
-      return null;
-    }
-
-    const data = await res.json();
+    const data = await fetchAuth('/api/auth/refresh', { refresh_token: refreshToken });
     const newAccessToken = data.access_token;
     const expiryTime = Date.now() + (data.expires_in - 60) * 1000;
 
@@ -131,8 +143,11 @@ export async function refreshAccessToken(): Promise<string | null> {
     notifyTokenUpdated(newAccessToken);
 
     return newAccessToken;
-  } catch (err) {
-    console.warn('Fallo de conexión al renovar token:', err);
+  } catch (err: any) {
+    console.warn('Error al renovar token en backend:', err);
+    if (err?.data?.error === 'invalid_grant' || err?.message?.includes('invalid_grant')) {
+      logout();
+    }
     return null;
   }
 }
