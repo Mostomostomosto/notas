@@ -1,6 +1,15 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, NoteBlock, ChecklistItem, ChecklistBlock, Tag, desaturateColor } from '../db/db';
+import {
+  db,
+  Note,
+  NoteBlock,
+  ChecklistItem,
+  ChecklistBlock,
+  ColumnsBlock,
+  Tag,
+  desaturateColor,
+} from '../db/db';
 import { scheduleSync } from '../services/syncEngine';
 import {
   Pin,
@@ -11,6 +20,8 @@ import {
   Heading,
   CheckSquare,
   Image as ImageIcon,
+  Columns3,
+  Settings2,
   RotateCcw,
   Check,
   X,
@@ -40,11 +51,31 @@ const createSnapshot = (n: Note): NoteSnapshot => ({
   blocks: JSON.parse(JSON.stringify(n.blocks)),
 });
 
+interface ColumnItem {
+  id: string;
+  name: string;
+  originalIndex?: number;
+}
+
+interface ColumnsModalState {
+  isOpen: boolean;
+  blockId?: string;
+  columns: ColumnItem[];
+}
+
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const itemInputsRef = useRef<Map<string, HTMLInputElement>>(new Map());
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
+
+  const [columnsModal, setColumnsModal] = useState<ColumnsModalState>({
+    isOpen: false,
+    columns: [],
+  });
+  const [columnInputText, setColumnInputText] = useState('');
+  const [addingRowForBlockId, setAddingRowForBlockId] = useState<string | null>(null);
+  const [newRowInputs, setNewRowInputs] = useState<string[]>([]);
 
   // Estado local sincronizado para garantizar que la edición y la posición del cursor no salten
   const [localNote, setLocalNote] = useState<Note | null>(note);
@@ -526,6 +557,216 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     saveChangesImmediate(updated);
   };
 
+  // Manipulación de tablas y columnas
+  const handleOpenColumnsModal = (blockId?: string) => {
+    if (blockId && localNote) {
+      const block = localNote.blocks.find((b) => b.id === blockId) as ColumnsBlock | undefined;
+      if (block) {
+        setColumnsModal({
+          isOpen: true,
+          blockId,
+          columns: block.labels.map((l, i) => ({
+            id: `col_${i}_${Date.now()}`,
+            name: l,
+            originalIndex: i,
+          })),
+        });
+        setColumnInputText('');
+        return;
+      }
+    }
+    setColumnsModal({
+      isOpen: true,
+      blockId: undefined,
+      columns: [],
+    });
+    setColumnInputText('');
+  };
+
+  const handleAddModalColumn = () => {
+    const trimmed = columnInputText.trim();
+    if (!trimmed) return;
+    setColumnsModal((prev) => ({
+      ...prev,
+      columns: [
+        ...prev.columns,
+        {
+          id: `col_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          name: trimmed,
+        },
+      ],
+    }));
+    setColumnInputText('');
+  };
+
+  const handleRemoveModalColumn = (colIndex: number) => {
+    const colToRemove = columnsModal.columns[colIndex];
+    if (columnsModal.blockId && colToRemove.originalIndex !== undefined && localNote) {
+      const block = localNote.blocks.find(
+        (b) => b.id === columnsModal.blockId
+      ) as ColumnsBlock | undefined;
+      if (block) {
+        const origIdx = colToRemove.originalIndex;
+        const hasData = block.rows.some((r) => r[origIdx] && r[origIdx].trim() !== '');
+        if (hasData) {
+          if (!window.confirm('¿Seguro? Se perderán los datos de esta columna en todas las filas.')) {
+            return;
+          }
+        }
+      }
+    }
+
+    setColumnsModal((prev) => ({
+      ...prev,
+      columns: prev.columns.filter((_, idx) => idx !== colIndex),
+    }));
+  };
+
+  const handleSaveColumnsModal = () => {
+    if (columnsModal.columns.length === 0 || !localNote) return;
+    pushDiscreteSnapshot();
+
+    const labels = columnsModal.columns.map((c) => c.name);
+
+    if (columnsModal.blockId) {
+      const blockId = columnsModal.blockId;
+      const block = localNote.blocks.find((b) => b.id === blockId) as ColumnsBlock | undefined;
+      if (!block) return;
+
+      const newRows = block.rows.map((oldRow) => {
+        return columnsModal.columns.map((col) => {
+          if (col.originalIndex !== undefined && oldRow[col.originalIndex] !== undefined) {
+            return oldRow[col.originalIndex];
+          }
+          return '';
+        });
+      });
+
+      const updatedBlocks = localNote.blocks.map((b) => {
+        if (b.id === blockId && b.type === 'columns') {
+          return {
+            ...b,
+            labels,
+            rows: newRows,
+          } as ColumnsBlock;
+        }
+        return b;
+      });
+
+      const updated: Note = {
+        ...localNote,
+        blocks: updatedBlocks,
+        updatedAt: new Date().toISOString(),
+      };
+      saveChangesImmediate(updated);
+    } else {
+      const newBlock: ColumnsBlock = {
+        id: `col_block_${Date.now()}`,
+        type: 'columns',
+        labels,
+        rows: [],
+      };
+      const updated: Note = {
+        ...localNote,
+        blocks: [...localNote.blocks, newBlock],
+        updatedAt: new Date().toISOString(),
+      };
+      saveChangesImmediate(updated);
+    }
+
+    setColumnsModal({ isOpen: false, columns: [] });
+    setColumnInputText('');
+  };
+
+  const handleStartAddRow = (block: ColumnsBlock) => {
+    setAddingRowForBlockId(block.id);
+    setNewRowInputs(new Array(block.labels.length).fill(''));
+  };
+
+  const handleCancelAddRow = () => {
+    setAddingRowForBlockId(null);
+    setNewRowInputs([]);
+  };
+
+  const handleConfirmAddRow = (blockId: string) => {
+    if (!localNote) return;
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'columns') {
+        return {
+          ...b,
+          rows: [...b.rows, [...newRowInputs]],
+        };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+
+    const targetBlock = updatedBlocks.find((b) => b.id === blockId) as ColumnsBlock | undefined;
+    if (targetBlock) {
+      setNewRowInputs(new Array(targetBlock.labels.length).fill(''));
+    } else {
+      setAddingRowForBlockId(null);
+      setNewRowInputs([]);
+    }
+  };
+
+  const handleUpdateCell = (
+    blockId: string,
+    rowIndex: number,
+    colIndex: number,
+    value: string
+  ) => {
+    if (!localNote) return;
+    registerTypingChange();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'columns') {
+        const newRows = b.rows.map((row, rIdx) => {
+          if (rIdx === rowIndex) {
+            const newRow = [...row];
+            newRow[colIndex] = value;
+            return newRow;
+          }
+          return row;
+        });
+        return { ...b, rows: newRows };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
+  };
+
+  const handleDeleteRow = (blockId: string, rowIndex: number) => {
+    if (!localNote) return;
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'columns') {
+        return {
+          ...b,
+          rows: b.rows.filter((_, idx) => idx !== rowIndex),
+        };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+  };
+
   // Subir imagen local
   const handleImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -708,6 +949,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             >
               <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
               <span>Imagen</span>
+            </button>
+
+            <button
+              onClick={() => handleOpenColumnsModal()}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+            >
+              <Columns3 className="w-3.5 h-3.5 text-[#8A8478]" />
+              <span>Tabla</span>
             </button>
           </div>
 
@@ -939,6 +1188,233 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   />
                 </div>
               )}
+
+              {/* Columns / Table block */}
+              {block.type === 'columns' && (
+                <div className="space-y-2 my-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#8A8478]">
+                      <Columns3 className="w-3.5 h-3.5" />
+                      <span>
+                        Tabla ({block.labels.length}{' '}
+                        {block.labels.length === 1 ? 'columna' : 'columnas'})
+                      </span>
+                    </div>
+                    {!localNote.deleted && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenColumnsModal(block.id)}
+                        className="flex items-center gap-1 text-[11px] text-[#8A8478] hover:text-[#2B2A28] bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] px-2 py-0.5 rounded-lg transition-colors cursor-pointer"
+                        title="Configurar columnas"
+                      >
+                        <Settings2 className="w-3 h-3" />
+                        <span>Columnas</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Desktop view: HTML Table */}
+                  <div className="hidden md:block overflow-x-auto border border-[#E4DECE] rounded-xl bg-white shadow-xs">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-[#F7F4EE] border-b border-[#E4DECE]">
+                          {block.labels.map((label, lIdx) => (
+                            <th
+                              key={lIdx}
+                              className="px-3 py-2 font-semibold text-[#2B2A28] border-r border-[#E4DECE] last:border-r-0"
+                            >
+                              {label}
+                            </th>
+                          ))}
+                          {!localNote.deleted && <th className="w-8 px-2 py-2"></th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E4DECE]/70">
+                        {block.rows.map((row, rIdx) => (
+                          <tr
+                            key={rIdx}
+                            className="group/row hover:bg-[#FAF9F5] transition-colors"
+                          >
+                            {block.labels.map((_, cIdx) => (
+                              <td
+                                key={cIdx}
+                                className="p-0 border-r border-[#E4DECE]/70 last:border-r-0"
+                              >
+                                <input
+                                  type="text"
+                                  value={row[cIdx] || ''}
+                                  disabled={localNote.deleted}
+                                  onChange={(e) =>
+                                    handleUpdateCell(block.id, rIdx, cIdx, e.target.value)
+                                  }
+                                  placeholder="..."
+                                  className="w-full px-3 py-2 text-xs text-[#2B2A28] bg-transparent outline-none focus:bg-white focus:ring-1 focus:ring-[#C98A3D]/40"
+                                />
+                              </td>
+                            ))}
+                            {!localNote.deleted && (
+                              <td className="px-2 py-1 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRow(block.id, rIdx)}
+                                  className="opacity-0 group-hover/row:opacity-100 p-1 text-[#8A8478] hover:text-[#B4553F] rounded transition-opacity cursor-pointer"
+                                  title="Eliminar fila"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                        {block.rows.length === 0 && (
+                          <tr>
+                            <td
+                              colSpan={block.labels.length + (localNote.deleted ? 0 : 1)}
+                              className="px-3 py-4 text-center text-[#8A8478]/60 italic text-xs"
+                            >
+                              Sin filas todavía
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile view: Stacked Mini-cards */}
+                  <div className="block md:hidden space-y-2.5">
+                    {block.rows.map((row, rIdx) => (
+                      <div
+                        key={rIdx}
+                        className="bg-[#FAF9F5] border border-[#E4DECE] rounded-xl p-3 relative group"
+                      >
+                        {!localNote.deleted && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRow(block.id, rIdx)}
+                            className="absolute top-2 right-2 p-1 text-[#8A8478] hover:text-[#B4553F] rounded cursor-pointer"
+                            title="Eliminar fila"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {/* First column as title */}
+                        {block.labels.length > 0 && (
+                          <div className="pr-6 mb-2">
+                            <input
+                              type="text"
+                              value={row[0] || ''}
+                              disabled={localNote.deleted}
+                              onChange={(e) =>
+                                handleUpdateCell(block.id, rIdx, 0, e.target.value)
+                              }
+                              placeholder={block.labels[0] || 'Elemento...'}
+                              className="w-full text-sm font-bold text-[#2B2A28] bg-transparent outline-none border-b border-transparent focus:border-[#E4DECE]"
+                            />
+                          </div>
+                        )}
+                        {/* Remaining columns stacked */}
+                        <div className="space-y-1.5 pt-1">
+                          {block.labels.slice(1).map((lbl, cOffset) => {
+                            const cIdx = cOffset + 1;
+                            return (
+                              <div key={cIdx} className="flex items-center gap-2 text-xs">
+                                <span className="text-[#8A8478] font-medium shrink-0 min-w-[70px]">
+                                  {lbl}:
+                                </span>
+                                <input
+                                  type="text"
+                                  value={row[cIdx] || ''}
+                                  disabled={localNote.deleted}
+                                  onChange={(e) =>
+                                    handleUpdateCell(block.id, rIdx, cIdx, e.target.value)
+                                  }
+                                  placeholder="..."
+                                  className="flex-1 text-[#2B2A28] bg-transparent outline-none border-b border-transparent focus:border-[#E4DECE] py-0.5"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    {block.rows.length === 0 && (
+                      <div className="p-3 text-center text-[#8A8478]/60 italic text-xs border border-dashed border-[#E4DECE] rounded-xl">
+                        Sin filas todavía
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Add Row Section */}
+                  {!localNote.deleted && (
+                    <div>
+                      {addingRowForBlockId === block.id ? (
+                        <div className="p-3 bg-[#FAF9F5] border border-[#E4DECE] rounded-xl space-y-2.5 mt-2">
+                          <div className="text-xs font-semibold text-[#2B2A28]">
+                            Nueva fila
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                            {block.labels.map((lbl, idx) => (
+                              <div key={idx} className="space-y-1">
+                                <span
+                                  className="text-[11px] font-medium text-[#8A8478] block truncate"
+                                  title={lbl}
+                                >
+                                  {lbl}
+                                </span>
+                                <input
+                                  type="text"
+                                  autoFocus={idx === 0}
+                                  value={newRowInputs[idx] || ''}
+                                  onChange={(e) => {
+                                    const copy = [...newRowInputs];
+                                    copy[idx] = e.target.value;
+                                    setNewRowInputs(copy);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      if (idx === block.labels.length - 1) {
+                                        handleConfirmAddRow(block.id);
+                                      }
+                                    }
+                                  }}
+                                  placeholder={`Escribe ${lbl.toLowerCase()}...`}
+                                  className="w-full bg-white border border-[#E4DECE] rounded-lg px-2.5 py-1.5 text-xs text-[#2B2A28] outline-none focus:border-[#2B2A28]"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmAddRow(block.id)}
+                              className="px-3 py-1.5 bg-[#3F6E64] hover:bg-[#345b53] text-white text-xs font-medium rounded-lg transition-colors cursor-pointer"
+                            >
+                              Guardar fila
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancelAddRow}
+                              className="px-3 py-1.5 bg-white hover:bg-[#FAF9F5] border border-[#E4DECE] text-[#8A8478] hover:text-[#2B2A28] text-xs font-medium rounded-lg transition-colors cursor-pointer"
+                            >
+                              Cerrar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleStartAddRow(block)}
+                          className="flex items-center gap-1.5 text-xs text-[#8A8478] hover:text-[#2B2A28] pt-1 cursor-pointer font-medium"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Añadir fila</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
@@ -972,11 +1448,122 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
                   <span>+ Imagen</span>
                 </button>
+                <button
+                  onClick={() => handleOpenColumnsModal()}
+                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Columns3 className="w-3.5 h-3.5 text-[#8A8478]" />
+                  <span>+ Tabla</span>
+                </button>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Column Configuration Modal */}
+      {columnsModal.isOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl border border-[#E4DECE] shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Columns3 className="w-5 h-5 text-[#2B2A28]" />
+                <h3 className="font-semibold text-base text-[#2B2A28]">
+                  {columnsModal.blockId ? 'Editar columnas' : 'Nueva tabla'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setColumnsModal({ isOpen: false, columns: [] })}
+                className="text-[#8A8478] hover:text-[#2B2A28] p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#8A8478]">
+              Define las columnas para organizar tus datos (ej. Nombre, Ocupación, Teléfono).
+            </p>
+
+            {/* Input to add column */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                autoFocus
+                value={columnInputText}
+                onChange={(e) => setColumnInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddModalColumn();
+                  }
+                }}
+                placeholder="Nombre de la columna..."
+                className="flex-1 bg-[#FAF9F5] border border-[#E4DECE] rounded-lg px-3 py-2 text-xs text-[#2B2A28] outline-none focus:border-[#2B2A28] focus:bg-white transition-all"
+              />
+              <button
+                type="button"
+                onClick={handleAddModalColumn}
+                disabled={!columnInputText.trim()}
+                className="px-3 py-2 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] text-[#2B2A28] text-xs font-medium rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Añadir</span>
+              </button>
+            </div>
+
+            {/* Column chips */}
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-medium text-[#8A8478]">
+                Columnas ({columnsModal.columns.length}):
+              </div>
+              {columnsModal.columns.length === 0 ? (
+                <div className="text-xs text-[#8A8478]/70 italic py-2">
+                  Escribe un encabezado y pulsa Enter o Añadir.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto p-1">
+                  {columnsModal.columns.map((col, idx) => (
+                    <span
+                      key={col.id}
+                      className="inline-flex items-center gap-1.5 bg-[#F7F4EE] border border-[#E4DECE] px-2.5 py-1 rounded-lg text-xs font-medium text-[#2B2A28]"
+                    >
+                      <span>{col.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveModalColumn(idx)}
+                        className="text-[#8A8478] hover:text-[#B4553F] p-0.5 rounded cursor-pointer transition-colors"
+                        title="Eliminar columna"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E4DECE]">
+              <button
+                type="button"
+                onClick={() => setColumnsModal({ isOpen: false, columns: [] })}
+                className="px-3.5 py-2 text-xs font-medium text-[#8A8478] hover:text-[#2B2A28] transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveColumnsModal}
+                disabled={columnsModal.columns.length === 0}
+                className="px-4 py-2 bg-[#2B2A28] hover:bg-[#403E3B] text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {columnsModal.blockId ? 'Guardar columnas' : 'Crear tabla'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

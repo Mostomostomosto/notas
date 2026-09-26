@@ -57,6 +57,12 @@ export const NoteList: React.FC<NoteListProps> = ({
       if (b.type === 'checklist') {
         return b.items.some((item) => item.text.toLowerCase().includes(query));
       }
+      if (b.type === 'columns') {
+        return (
+          b.labels.some((l) => l.toLowerCase().includes(query)) ||
+          b.rows.some((r) => r.some((cell) => cell.toLowerCase().includes(query)))
+        );
+      }
       return false;
     });
   });
@@ -96,6 +102,13 @@ export const NoteList: React.FC<NoteListProps> = ({
       }
       if (b.type === 'heading' && b.content.trim()) {
         return b.content;
+      }
+      if (b.type === 'columns' && b.labels.length > 0) {
+        if (b.rows.length > 0) {
+          const firstRowFilled = b.rows[0].filter(Boolean);
+          if (firstRowFilled.length > 0) return firstRowFilled.join(' · ');
+        }
+        return `Tabla: ${b.labels.join(' · ')}`;
       }
     }
     return 'Nota vacía';

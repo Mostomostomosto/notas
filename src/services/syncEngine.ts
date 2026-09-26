@@ -101,6 +101,13 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
           if (b.type === 'image') {
             return { type: 'image', driveFileId: b.driveFileId, caption: b.caption || '' };
           }
+          if (b.type === 'columns') {
+            return {
+              type: 'columns',
+              labels: b.labels || [],
+              rows: b.rows || [],
+            };
+          }
           return b;
         }),
       };
