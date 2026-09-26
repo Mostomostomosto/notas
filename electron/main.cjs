@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, session } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, MenuItem } = require('electron');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -151,6 +151,38 @@ function createWindow() {
   const cleanUa = currentUa.replace(/Electron\/[0-9\.]+\s?/g, '');
   mainWindow.webContents.setUserAgent(cleanUa);
   session.defaultSession.setUserAgent(cleanUa);
+
+  // Menú contextual nativo con Deshacer, Rehacer, Cortar, Copiar, Pegar y Seleccionar todo
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menu = new Menu();
+
+    if (params.isEditable) {
+      menu.append(new MenuItem({ label: 'Deshacer', role: 'undo', enabled: params.editFlags.canUndo }));
+      menu.append(new MenuItem({ label: 'Rehacer', role: 'redo', enabled: params.editFlags.canRedo }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ label: 'Cortar', role: 'cut', enabled: params.editFlags.canCut }));
+      menu.append(new MenuItem({ label: 'Copiar', role: 'copy', enabled: params.editFlags.canCopy }));
+      menu.append(new MenuItem({ label: 'Pegar', role: 'paste', enabled: params.editFlags.canPaste }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ label: 'Seleccionar todo', role: 'selectAll', enabled: params.editFlags.canSelectAll }));
+      menu.popup({ window: mainWindow });
+      return;
+    }
+
+    const hasSelection = params.selectionText && params.selectionText.trim().length > 0;
+    if (hasSelection) {
+      menu.append(new MenuItem({ label: 'Copiar', role: 'copy' }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ label: 'Seleccionar todo', role: 'selectAll', enabled: params.editFlags.canSelectAll }));
+      menu.popup({ window: mainWindow });
+      return;
+    }
+
+    // Clic derecho fuera de texto editable (ej: zona general de la nota)
+    menu.append(new MenuItem({ label: 'Pegar', role: 'paste', enabled: params.editFlags.canPaste }));
+    menu.append(new MenuItem({ label: 'Seleccionar todo', role: 'selectAll', enabled: params.editFlags.canSelectAll }));
+    menu.popup({ window: mainWindow });
+  });
 
   // Handle popups & external links
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

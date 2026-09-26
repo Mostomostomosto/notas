@@ -735,7 +735,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       )}
 
       {/* Editor Content Area */}
-      <div className="flex-1 overflow-y-auto px-8 py-8 max-w-3xl w-full">
+      <div className="flex-1 overflow-y-auto px-8 py-8 max-w-3xl w-full select-text">
         {/* Title Input */}
         <input
           type="text"
