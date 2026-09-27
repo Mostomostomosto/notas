@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Note, Tag, AppEvent, seedInitialData, isNoteArchived } from './db/db';
 import { Sidebar, SidebarFilter } from './components/Sidebar';
@@ -128,15 +128,18 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Seleccionar la primera nota automáticamente SOLO en escritorio
+  const hasInitialSelectionRun = useRef(false);
+
+  // Seleccionar la primera nota automáticamente SOLO al cargar la app en escritorio
   useEffect(() => {
-    if (isDesktop && !selectedNoteId && notes.length > 0) {
-      const activeNotes = notes.filter((n) => !n.deleted);
+    if (isDesktop && !hasInitialSelectionRun.current && notes.length > 0) {
+      hasInitialSelectionRun.current = true;
+      const activeNotes = notes.filter((n) => !n.deleted && !isNoteArchived(n.tag, tags));
       if (activeNotes.length > 0) {
         setSelectedNoteId(activeNotes[0].id);
       }
     }
-  }, [isDesktop, notes, selectedNoteId]);
+  }, [isDesktop, notes, tags]);
 
   // Manejadores de autenticación
   const handleConnectGoogle = () => {
@@ -200,7 +203,27 @@ export const App: React.FC = () => {
     setDeleteToastTimeout(timer);
 
     if (isDesktop) {
-      const remaining = notes.filter((n) => !n.deleted && n.id !== deletedNote.id);
+      const childTagNames =
+        currentFilter.type === 'tag'
+          ? tags
+              .filter((t: Tag) => t.parentId === currentFilter.tagId)
+              .map((t: Tag) => t.name.toLowerCase())
+          : [];
+
+      const remaining = notes.filter((n) => {
+        if (n.id === deletedNote.id) return false;
+        if (currentFilter.type === 'trash') return n.deleted === true;
+        if (n.deleted === true) return false;
+        if (currentFilter.type === 'pinned') return n.pinned === true && !isNoteArchived(n.tag, tags);
+        if (currentFilter.type === 'tag') {
+          const noteTag = (n.tag || '').toLowerCase();
+          return (
+            noteTag === currentFilter.tagName.toLowerCase() ||
+            childTagNames.includes(noteTag)
+          );
+        }
+        return !isNoteArchived(n.tag, tags);
+      });
       setSelectedNoteId(remaining.length > 0 ? remaining[0].id : null);
     } else {
       setSelectedNoteId(null);

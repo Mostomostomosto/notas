@@ -27,6 +27,7 @@ import {
   X,
   Undo2,
   Redo2,
+  FileText,
 } from 'lucide-react';
 
 interface NoteDetailProps {
@@ -331,12 +332,9 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   if (!localNote) {
     return (
-      <div className="flex-1 bg-white flex flex-col items-center justify-center p-8 text-[#8A8478]">
-        <div className="w-16 h-16 rounded-2xl bg-[#F7F4EE] border border-[#E4DECE] flex items-center justify-center mb-4 text-[#8A8478]">
-          <CheckSquare className="w-8 h-8 opacity-40" />
-        </div>
-        <h3 className="font-semibold text-base text-[#2B2A28] mb-1">Ninguna nota seleccionada</h3>
-        <p className="text-xs text-[#8A8478]">Selecciona una nota de la lista o crea una nueva.</p>
+      <div className="flex-1 bg-white flex flex-col items-center justify-center h-full p-8 text-center text-[#8A8478] select-none">
+        <FileText className="w-8 h-8 mx-auto mb-2 opacity-30 text-[#8A8478]" />
+        <p className="text-xs text-[#8A8478]">No hay notas que mostrar</p>
       </div>
     );
   }
