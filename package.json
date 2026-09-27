@@ -11,7 +11,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "icon:generate": "node scripts/generate-icon.cjs",
-    "electron:dev": "electron .",
+    "electron:dev": "node scripts/generate-icon.cjs && electron .",
     "electron:build": "npm run build && npm run icon:generate && electron-builder --win"
   },
   "dependencies": {
@@ -48,7 +48,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "build/icon.ico"
+      "build/icon.ico",
+      "def-ico.png"
     ],
     "win": {
       "target": [

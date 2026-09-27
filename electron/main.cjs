@@ -1,8 +1,13 @@
-const { app, BrowserWindow, shell, session, Menu, MenuItem } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, MenuItem, nativeImage } = require('electron');
 const path = require('path');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+
+// Configurar AppUserModelId para Windows para que muestre el icono de Bitácora en la barra de tareas
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.mostomosto.bitacora');
+}
 
 const PORT = 5174;
 const VERCEL_AUTH_HOST = 'notas-theta-sandy.vercel.app';
@@ -128,6 +133,17 @@ function startStaticServer(distDir) {
 
 function createWindow() {
   const iconPath = path.join(__dirname, '../build/icon.ico');
+  const pngIconPath = path.join(__dirname, '../def-ico.png');
+  const publicPngPath = path.join(__dirname, '../public/def-ico.png');
+
+  let windowIcon = undefined;
+  if (fs.existsSync(iconPath)) {
+    windowIcon = nativeImage.createFromPath(iconPath);
+  } else if (fs.existsSync(pngIconPath)) {
+    windowIcon = nativeImage.createFromPath(pngIconPath);
+  } else if (fs.existsSync(publicPngPath)) {
+    windowIcon = nativeImage.createFromPath(publicPngPath);
+  }
 
   mainWindow = new BrowserWindow({
     width: 1150,
@@ -135,7 +151,7 @@ function createWindow() {
     minWidth: 460,
     minHeight: 560,
     title: 'Bitácora',
-    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    icon: windowIcon,
     autoHideMenuBar: true,
     show: false,
     backgroundColor: '#F7F4EE',
@@ -145,6 +161,10 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  if (windowIcon) {
+    mainWindow.setIcon(windowIcon);
+  }
 
   // Strip "Electron/X.X.X" from User-Agent so Google OAuth doesn't block the login popup
   const currentUa = mainWindow.webContents.getUserAgent();
