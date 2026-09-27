@@ -75,8 +75,12 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     columns: [],
   });
   const [columnInputText, setColumnInputText] = useState('');
-  const [addingRowForBlockId, setAddingRowForBlockId] = useState<string | null>(null);
-  const [newRowInputs, setNewRowInputs] = useState<string[]>([]);
+  const cellInputsRef = useRef<Map<string, HTMLInputElement>>(new Map());
+  const [focusCellCoord, setFocusCellCoord] = useState<{
+    blockId: string;
+    rowIndex: number;
+    colIndex: number;
+  } | null>(null);
 
   // Estado local sincronizado para garantizar que la edición y la posición del cursor no salten
   const [localNote, setLocalNote] = useState<Note | null>(note);
@@ -168,6 +172,62 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       return () => clearTimeout(timer);
     }
   }, [focusItemId]);
+
+  // Helper para registrar las referencias de inputs de celdas de tabla (separando desktop y mobile)
+  const setCellInputRef = (
+    blockId: string,
+    rowIndex: number,
+    colIndex: number,
+    el: HTMLInputElement | null,
+    mode: 'desktop' | 'mobile'
+  ) => {
+    const key = `${mode}_${blockId}_${rowIndex}_${colIndex}`;
+    if (el) {
+      cellInputsRef.current.set(key, el);
+    } else {
+      cellInputsRef.current.delete(key);
+    }
+  };
+
+  // Mover el foco directamente a una celda existente o programarlo si aún no está montada
+  const focusCellDirect = (blockId: string, rowIndex: number, colIndex: number) => {
+    const isDesktop = typeof window !== 'undefined' ? window.innerWidth >= 768 : true;
+    const targetMode = isDesktop ? 'desktop' : 'mobile';
+    const key = `${targetMode}_${blockId}_${rowIndex}_${colIndex}`;
+    const el =
+      cellInputsRef.current.get(key) ||
+      cellInputsRef.current.get(`desktop_${blockId}_${rowIndex}_${colIndex}`) ||
+      cellInputsRef.current.get(`mobile_${blockId}_${rowIndex}_${colIndex}`);
+    if (el) {
+      el.focus();
+      const len = el.value.length;
+      el.setSelectionRange(len, len);
+    } else {
+      setFocusCellCoord({ blockId, rowIndex, colIndex });
+    }
+  };
+
+  // Efecto para enfocar automáticamente la primera celda cuando se añade una nueva fila
+  useEffect(() => {
+    if (focusCellCoord) {
+      const isDesktop = typeof window !== 'undefined' ? window.innerWidth >= 768 : true;
+      const targetMode = isDesktop ? 'desktop' : 'mobile';
+      const key = `${targetMode}_${focusCellCoord.blockId}_${focusCellCoord.rowIndex}_${focusCellCoord.colIndex}`;
+      const timer = setTimeout(() => {
+        const el =
+          cellInputsRef.current.get(key) ||
+          cellInputsRef.current.get(`desktop_${focusCellCoord.blockId}_${focusCellCoord.rowIndex}_${focusCellCoord.colIndex}`) ||
+          cellInputsRef.current.get(`mobile_${focusCellCoord.blockId}_${focusCellCoord.rowIndex}_${focusCellCoord.colIndex}`);
+        if (el) {
+          el.focus();
+          const len = el.value.length;
+          el.setSelectionRange(len, len);
+        }
+        setFocusCellCoord(null);
+      }, 30);
+      return () => clearTimeout(timer);
+    }
+  }, [focusCellCoord, localNote]);
 
   // Historial de cambios para Deshacer / Rehacer (Undo / Redo)
   const pastRef = useRef<NoteSnapshot[]>([]);
@@ -676,41 +736,60 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     setColumnInputText('');
   };
 
-  const handleStartAddRow = (block: ColumnsBlock) => {
-    setAddingRowForBlockId(block.id);
-    setNewRowInputs(new Array(block.labels.length).fill(''));
-  };
-
-  const handleCancelAddRow = () => {
-    setAddingRowForBlockId(null);
-    setNewRowInputs([]);
-  };
-
-  const handleConfirmAddRow = (blockId: string) => {
+  const handleAddNewRow = (blockId: string) => {
     if (!localNote) return;
     pushDiscreteSnapshot();
+    let newRowIndex = 0;
     const updatedBlocks = localNote.blocks.map((b) => {
       if (b.id === blockId && b.type === 'columns') {
+        const emptyRow = new Array(b.labels.length).fill('');
+        newRowIndex = b.rows.length;
         return {
           ...b,
-          rows: [...b.rows, [...newRowInputs]],
+          rows: [...b.rows, emptyRow],
         };
       }
       return b;
     });
+
     const updated: Note = {
       ...localNote,
       blocks: updatedBlocks,
       updatedAt: new Date().toISOString(),
     };
     saveChangesImmediate(updated);
+    setFocusCellCoord({ blockId, rowIndex: newRowIndex, colIndex: 0 });
+  };
 
-    const targetBlock = updatedBlocks.find((b) => b.id === blockId) as ColumnsBlock | undefined;
-    if (targetBlock) {
-      setNewRowInputs(new Array(targetBlock.labels.length).fill(''));
-    } else {
-      setAddingRowForBlockId(null);
-      setNewRowInputs([]);
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    block: ColumnsBlock,
+    rIdx: number,
+    cIdx: number
+  ) => {
+    const numRows = block.rows.length;
+    const numCols = block.labels.length;
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (rIdx < numRows - 1) {
+        // Mover el cursor a la celda de la misma columna, en la fila siguiente
+        focusCellDirect(block.id, rIdx + 1, cIdx);
+      } else {
+        // Cursor en la última fila: crea fila nueva vacía y mueve el cursor a la primera celda
+        handleAddNewRow(block.id);
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        // Retroceso circular dentro de la fila actual
+        const prevCol = cIdx > 0 ? cIdx - 1 : numCols - 1;
+        focusCellDirect(block.id, rIdx, prevCol);
+      } else {
+        // Avance circular dentro de la fila actual (nunca crea filas nuevas)
+        const nextCol = cIdx < numCols - 1 ? cIdx + 1 : 0;
+        focusCellDirect(block.id, rIdx, nextCol);
+      }
     }
   };
 
@@ -1240,11 +1319,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                               >
                                 <input
                                   type="text"
+                                  ref={(el) => setCellInputRef(block.id, rIdx, cIdx, el, 'desktop')}
                                   value={row[cIdx] || ''}
                                   disabled={localNote.deleted}
                                   onChange={(e) =>
                                     handleUpdateCell(block.id, rIdx, cIdx, e.target.value)
                                   }
+                                  onKeyDown={(e) => handleCellKeyDown(e, block, rIdx, cIdx)}
                                   placeholder="..."
                                   className="w-full px-3 py-2 text-xs text-[#2B2A28] bg-transparent outline-none focus:bg-white focus:ring-1 focus:ring-[#C98A3D]/40"
                                 />
@@ -1258,7 +1339,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                                   className="opacity-0 group-hover/row:opacity-100 p-1 text-[#8A8478] hover:text-[#B4553F] rounded transition-opacity cursor-pointer"
                                   title="Eliminar fila"
                                 >
-                                  <X className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </td>
                             )}
@@ -1292,7 +1373,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                             className="absolute top-2 right-2 p-1 text-[#8A8478] hover:text-[#B4553F] rounded cursor-pointer"
                             title="Eliminar fila"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
                         {/* First column as title */}
@@ -1300,11 +1381,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                           <div className="pr-6 mb-2">
                             <input
                               type="text"
+                              ref={(el) => setCellInputRef(block.id, rIdx, 0, el, 'mobile')}
                               value={row[0] || ''}
                               disabled={localNote.deleted}
                               onChange={(e) =>
                                 handleUpdateCell(block.id, rIdx, 0, e.target.value)
                               }
+                              onKeyDown={(e) => handleCellKeyDown(e, block, rIdx, 0)}
                               placeholder={block.labels[0] || 'Elemento...'}
                               className="w-full text-sm font-bold text-[#2B2A28] bg-transparent outline-none border-b border-transparent focus:border-[#E4DECE]"
                             />
@@ -1321,11 +1404,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                                 </span>
                                 <input
                                   type="text"
+                                  ref={(el) => setCellInputRef(block.id, rIdx, cIdx, el, 'mobile')}
                                   value={row[cIdx] || ''}
                                   disabled={localNote.deleted}
                                   onChange={(e) =>
                                     handleUpdateCell(block.id, rIdx, cIdx, e.target.value)
                                   }
+                                  onKeyDown={(e) => handleCellKeyDown(e, block, rIdx, cIdx)}
                                   placeholder="..."
                                   className="flex-1 text-[#2B2A28] bg-transparent outline-none border-b border-transparent focus:border-[#E4DECE] py-0.5"
                                 />
@@ -1342,73 +1427,17 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                     )}
                   </div>
 
-                  {/* Add Row Section */}
+                  {/* Add Row Button */}
                   {!localNote.deleted && (
-                    <div>
-                      {addingRowForBlockId === block.id ? (
-                        <div className="p-3 bg-[#FAF9F5] border border-[#E4DECE] rounded-xl space-y-2.5 mt-2">
-                          <div className="text-xs font-semibold text-[#2B2A28]">
-                            Nueva fila
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                            {block.labels.map((lbl, idx) => (
-                              <div key={idx} className="space-y-1">
-                                <span
-                                  className="text-[11px] font-medium text-[#8A8478] block truncate"
-                                  title={lbl}
-                                >
-                                  {lbl}
-                                </span>
-                                <input
-                                  type="text"
-                                  autoFocus={idx === 0}
-                                  value={newRowInputs[idx] || ''}
-                                  onChange={(e) => {
-                                    const copy = [...newRowInputs];
-                                    copy[idx] = e.target.value;
-                                    setNewRowInputs(copy);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      if (idx === block.labels.length - 1) {
-                                        handleConfirmAddRow(block.id);
-                                      }
-                                    }
-                                  }}
-                                  placeholder={`Escribe ${lbl.toLowerCase()}...`}
-                                  className="w-full bg-white border border-[#E4DECE] rounded-lg px-2.5 py-1.5 text-xs text-[#2B2A28] outline-none focus:border-[#2B2A28]"
-                                />
-                              </div>
-                            ))}
-                          </div>
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmAddRow(block.id)}
-                              className="px-3 py-1.5 bg-[#3F6E64] hover:bg-[#345b53] text-white text-xs font-medium rounded-lg transition-colors cursor-pointer"
-                            >
-                              Guardar fila
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleCancelAddRow}
-                              className="px-3 py-1.5 bg-white hover:bg-[#FAF9F5] border border-[#E4DECE] text-[#8A8478] hover:text-[#2B2A28] text-xs font-medium rounded-lg transition-colors cursor-pointer"
-                            >
-                              Cerrar
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleStartAddRow(block)}
-                          className="flex items-center gap-1.5 text-xs text-[#8A8478] hover:text-[#2B2A28] pt-1 cursor-pointer font-medium"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Añadir fila</span>
-                        </button>
-                      )}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleAddNewRow(block.id)}
+                        className="flex items-center gap-1.5 text-xs text-[#8A8478] hover:text-[#2B2A28] py-1 px-1.5 rounded-lg hover:bg-black/5 cursor-pointer font-medium transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Añadir fila</span>
+                      </button>
                     </div>
                   )}
                 </div>
