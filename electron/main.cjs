@@ -9,6 +9,9 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.mostomosto.bitacora');
 }
 
+// Desactivar aceleración por hardware para mayor estabilidad en Windows
+app.disableHardwareAcceleration();
+
 const PORT = 5174;
 const VERCEL_AUTH_HOST = 'notas-theta-sandy.vercel.app';
 let mainWindow = null;
