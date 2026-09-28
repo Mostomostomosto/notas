@@ -615,6 +615,112 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     saveChangesImmediate(updated);
   };
 
+  const handleChecklistPaste = (
+    e: React.ClipboardEvent<HTMLInputElement>,
+    blockId: string,
+    itemIndex: number
+  ) => {
+    const clipboardText = e.clipboardData.getData('text');
+    if (!clipboardText || (!clipboardText.includes('\n') && !clipboardText.includes('\r'))) {
+      return;
+    }
+    e.preventDefault();
+
+    const rawLines = clipboardText.split(/\r?\n/);
+    interface ParsedCheckItem {
+      text: string;
+      explicitChecked: boolean | null;
+    }
+
+    const parsedItems: ParsedCheckItem[] = [];
+
+    for (const rawLine of rawLines) {
+      let lineText = rawLine.trim();
+      let explicitChecked: boolean | null = null;
+
+      // Detectar formato checkbox tipo: - [x], - [ ], [x], [ ], * [x], * [ ]
+      const checkboxMatch = lineText.match(/^[-*•–]?\s*\[([ xX])\]\s*(.*)$/);
+      if (checkboxMatch) {
+        explicitChecked = checkboxMatch[1].toLowerCase() === 'x';
+        lineText = checkboxMatch[2].trim();
+      } else {
+        // Detectar viñetas tipo -, *, • o numeración tipo 1., 2)
+        lineText = lineText.replace(/^[-*•–]\s+/, '');
+        lineText = lineText.replace(/^\d+[\.\)]\s+/, '');
+        lineText = lineText.trim();
+      }
+
+      if (lineText.length > 0 || explicitChecked !== null) {
+        parsedItems.push({ text: lineText, explicitChecked });
+      }
+    }
+
+    if (parsedItems.length === 0 || !localNote) return;
+
+    pushDiscreteSnapshot();
+
+    const input = e.currentTarget;
+    const selStart = input.selectionStart ?? 0;
+    const selEnd = input.selectionEnd ?? 0;
+
+    let lastInsertedId = '';
+
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'checklist') {
+        const currentItem = b.items[itemIndex];
+        const beforeText = currentItem ? currentItem.text.slice(0, selStart) : '';
+        const afterText = currentItem ? currentItem.text.slice(selEnd) : '';
+
+        const newItems: ChecklistItem[] = [];
+        parsedItems.forEach((pItem, pIdx) => {
+          const isFirst = pIdx === 0;
+          const isLast = pIdx === parsedItems.length - 1;
+          const id =
+            isFirst && currentItem?.id
+              ? currentItem.id
+              : `c_${Date.now()}_${pIdx}_${Math.random().toString(36).substring(2, 6)}`;
+
+          let text = pItem.text;
+          if (isFirst) text = beforeText + text;
+          if (isLast) text = text + afterText;
+
+          if (isLast) {
+            lastInsertedId = id;
+          }
+
+          let checked = false;
+          if (pItem.explicitChecked !== null) {
+            checked = pItem.explicitChecked;
+          } else if (isFirst && currentItem) {
+            checked = currentItem.checked;
+          }
+
+          newItems.push({
+            id,
+            text,
+            checked,
+          });
+        });
+
+        const spliced = [...b.items];
+        spliced.splice(itemIndex, 1, ...newItems);
+        return { ...b, items: spliced };
+      }
+      return b;
+    });
+
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveChangesImmediate(updated);
+    if (lastInsertedId) {
+      setFocusItemId(lastInsertedId);
+    }
+  };
+
   // Manipulación de tablas y columnas
   const handleOpenColumnsModal = (blockId?: string) => {
     if (blockId && localNote) {
@@ -1194,6 +1300,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                           onChange={(e) =>
                             handleUpdateCheckItemText(block.id, idx, e.target.value)
                           }
+                          onPaste={(e) => handleChecklistPaste(e, block.id, idx)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.keyCode === 13) {
                               e.preventDefault();
