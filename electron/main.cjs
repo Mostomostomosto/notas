@@ -231,9 +231,25 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  // Show window when ready to avoid white flash
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+  // Show window when ready to avoid white flash, with safety fallback
+  let shown = false;
+  const showSafely = () => {
+    if (!shown && mainWindow && !mainWindow.isDestroyed()) {
+      shown = true;
+      mainWindow.show();
+    }
+  };
+
+  mainWindow.once('ready-to-show', showSafely);
+  setTimeout(showSafely, 1000);
+
+  // Fallback to direct file loading if localhost fails
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`Failed to load page: ${errorCode} - ${errorDescription}`);
+    const indexFile = path.join(__dirname, '../dist/index.html');
+    if (fs.existsSync(indexFile) && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadFile(indexFile);
+    }
   });
 
   mainWindow.loadURL(`http://localhost:${PORT}`);
@@ -245,7 +261,10 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
