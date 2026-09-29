@@ -110,6 +110,14 @@ export const NoteList: React.FC<NoteListProps> = ({
         }
         return `Tabla: ${b.labels.join(' · ')}`;
       }
+      if (b.type === 'markdown' && b.content.trim()) {
+        const clean = b.content
+          .replace(/^[#\s>*-]+/gm, '')
+          .replace(/[*`_~\[\]]/g, '')
+          .replace(/<[^>]*>/g, '')
+          .trim();
+        return clean.length > 100 ? `${clean.slice(0, 100)}...` : clean;
+      }
     }
     return 'Nota vacía';
   };

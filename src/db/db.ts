@@ -1,6 +1,6 @@
 import Dexie, { Table } from 'dexie';
 
-export type BlockType = 'heading' | 'text' | 'checklist' | 'image' | 'columns';
+export type BlockType = 'heading' | 'text' | 'checklist' | 'image' | 'columns' | 'markdown';
 
 export interface ChecklistItem {
   id?: string;
@@ -41,12 +41,19 @@ export interface ColumnsBlock extends BaseBlock {
   rows: string[][]; // Filas con valores de celdas en texto plano
 }
 
+export interface MarkdownBlock extends BaseBlock {
+  type: 'markdown';
+  content: string; // Contenido en formato Markdown
+  fileName?: string; // Nombre del archivo importado si proviene de un archivo
+}
+
 export type NoteBlock =
   | HeadingBlock
   | TextBlock
   | ChecklistBlock
   | ImageBlock
-  | ColumnsBlock;
+  | ColumnsBlock
+  | MarkdownBlock;
 
 export interface Note {
   id: string;

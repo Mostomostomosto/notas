@@ -7,6 +7,7 @@ import {
   ChecklistItem,
   ChecklistBlock,
   ColumnsBlock,
+  MarkdownBlock,
   Tag,
   desaturateColor,
 } from '../db/db';
@@ -28,7 +29,12 @@ import {
   Undo2,
   Redo2,
   FileText,
+  FileCode,
+  Eye,
+  Pencil,
+  Upload,
 } from 'lucide-react';
+import { marked } from 'marked';
 
 interface NoteDetailProps {
   note: Note | null;
@@ -151,8 +157,156 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   );
 };
 
+interface MarkdownBlockItemProps {
+  block: MarkdownBlock;
+  disabled?: boolean;
+  onUpdateContent: (newContent: string) => void;
+  onReplaceFile: (newContent: string, fileName?: string) => void;
+}
+
+const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
+  block,
+  disabled,
+  onUpdateContent,
+  onReplaceFile,
+}) => {
+  const [isEditing, setIsEditing] = useState(() => !block.content);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      if (typeof text === 'string') {
+        onReplaceFile(text, file.name);
+        setIsEditing(false);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const parsedHtml = React.useMemo(() => {
+    if (!block.content) return '';
+    try {
+      return marked.parse(block.content, { gfm: true, breaks: true }) as string;
+    } catch (err) {
+      console.error('Error al parsear Markdown:', err);
+      return `<p>${block.content}</p>`;
+    }
+  }, [block.content]);
+
+  return (
+    <div className="rounded-xl border border-[#E4DECE] bg-[#FAF8F5] overflow-hidden transition-all shadow-2xs group/md">
+      {/* Barra superior del bloque Markdown */}
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#F4EFE6]/70 border-b border-[#E4DECE] text-xs text-[#8A8478]">
+        <div className="flex items-center gap-1.5 font-medium min-w-0">
+          <FileCode className="w-3.5 h-3.5 text-[#3F6E64] shrink-0" />
+          <span className="text-[#2B2A28] text-[11px] font-semibold tracking-wide uppercase">Markdown</span>
+          {block.fileName && (
+            <span
+              className="bg-white border border-[#E4DECE] px-2 py-0.5 rounded-full text-[10.5px] text-[#8A8478] truncate max-w-[200px]"
+              title={block.fileName}
+            >
+              {block.fileName}
+            </span>
+          )}
+        </div>
+
+        {!disabled && (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-white text-[#8A8478] hover:text-[#2B2A28] transition-colors cursor-pointer text-[11px]"
+              title="Cargar otro archivo .md"
+            >
+              <Upload className="w-3 h-3" />
+              <span className="hidden sm:inline">Cargar archivo</span>
+            </button>
+
+            {isEditing ? (
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-[#3F6E64] hover:bg-[#345b53] text-white text-[11px] font-semibold transition-colors cursor-pointer shadow-2xs"
+              >
+                <Eye className="w-3 h-3" />
+                <span>Vista previa</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-white text-[#8A8478] hover:text-[#2B2A28] transition-colors cursor-pointer text-[11px]"
+                title="Editar código Markdown"
+              >
+                <Pencil className="w-3 h-3" />
+                <span>Editar</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".md,.markdown,.txt"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* Contenido: Vista previa o Editor */}
+      <div className="p-4 bg-white min-h-[50px]">
+        {isEditing ? (
+          <div>
+            <AutoResizeTextBlock
+              value={block.content}
+              disabled={disabled}
+              onChange={onUpdateContent}
+              placeholder="# Escribe aquí en Markdown...&#10;**Negrita**, *cursiva*, listas con - o 1., tablas, etc."
+              className="w-full text-xs font-mono leading-relaxed text-[#2B2A28] outline-none bg-transparent resize-none placeholder-[#8A8478]/40"
+            />
+          </div>
+        ) : block.content ? (
+          <div
+            className="markdown-content select-text"
+            dangerouslySetInnerHTML={{ __html: parsedHtml }}
+          />
+        ) : (
+          <div className="text-center py-6 text-xs text-[#8A8478]">
+            <FileCode className="w-8 h-8 mx-auto mb-2 text-[#8A8478]/40" />
+            <p className="font-medium text-[#2B2A28] mb-1">Bloque Markdown sin contenido</p>
+            <p className="text-[11px] text-[#8A8478] mb-3">Puedes cargar un archivo .md o redactarlo directamente.</p>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#3F6E64] text-white rounded-md text-xs font-semibold hover:bg-[#345b53] cursor-pointer transition-colors shadow-2xs"
+              >
+                <Upload className="w-3 h-3" /> Cargar archivo .md
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#F7F4EE] border border-[#E4DECE] text-[#2B2A28] rounded-md text-xs font-medium hover:bg-white cursor-pointer transition-colors"
+              >
+                <Pencil className="w-3 h-3" /> Escribir texto
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mdFileInputRef = useRef<HTMLInputElement>(null);
   const itemInputsRef = useRef<Map<string, HTMLInputElement>>(new Map());
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
@@ -547,7 +701,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   // Manipulación de bloques
-  const handleAddBlock = (type: 'heading' | 'text' | 'checklist') => {
+  const handleAddBlock = (type: 'heading' | 'text' | 'checklist' | 'markdown') => {
     pushDiscreteSnapshot();
     const newBlockId = `b_${Date.now()}`;
     let newBlock: NoteBlock;
@@ -562,6 +716,8 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
         items: [{ id: newCheckId, text: '', checked: false }],
       };
       setFocusItemId(newCheckId);
+    } else if (type === 'markdown') {
+      newBlock = { id: newBlockId, type: 'markdown', content: '', fileName: undefined };
     } else {
       newBlock = { id: newBlockId, type: 'text', content: '' };
     }
@@ -577,7 +733,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const handleUpdateBlockContent = (blockId: string, newContent: string) => {
     registerTypingChange();
     const updatedBlocks = localNote.blocks.map((b) => {
-      if (b.id === blockId && (b.type === 'heading' || b.type === 'text')) {
+      if (b.id === blockId && (b.type === 'heading' || b.type === 'text' || b.type === 'markdown')) {
         return { ...b, content: newContent };
       }
       return b;
@@ -589,6 +745,55 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     };
     setLocalNote(updated);
     saveChangesDebounced(updated);
+  };
+
+  const handleUpdateMarkdownBlock = (blockId: string, newContent: string, fileName?: string) => {
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'markdown') {
+        return {
+          ...b,
+          content: newContent,
+          ...(fileName !== undefined ? { fileName } : {}),
+        };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+  };
+
+  const handleMarkdownFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !localNote) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (typeof content !== 'string') return;
+
+      pushDiscreteSnapshot();
+      const newBlockId = `b_${Date.now()}`;
+      const newBlock: NoteBlock = {
+        id: newBlockId,
+        type: 'markdown',
+        content,
+        fileName: file.name,
+      };
+
+      const updated: Note = {
+        ...localNote,
+        blocks: [...localNote.blocks, newBlock],
+        updatedAt: new Date().toISOString(),
+      };
+      saveChangesImmediate(updated);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleDeleteBlock = (blockId: string) => {
@@ -1228,6 +1433,18 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               <Columns3 className="w-3.5 h-3.5 text-[#8A8478]" />
               <span>Tabla</span>
             </button>
+
+            <div className="w-[1px] h-4 bg-[#E4DECE] mx-1" />
+
+            <button
+              type="button"
+              onClick={() => mdFileInputRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+              title="Importar archivo .md con estilos enriquecidos"
+            >
+              <FileCode className="w-3.5 h-3.5 text-[#3F6E64]" />
+              <span>Importar .md</span>
+            </button>
           </div>
 
           {/* Undo / Redo controls */}
@@ -1267,6 +1484,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             type="file"
             accept="image/*"
             onChange={handleImageSelected}
+            className="hidden"
+          />
+
+          <input
+            ref={mdFileInputRef}
+            type="file"
+            accept=".md,.markdown,.txt"
+            onChange={handleMarkdownFileSelected}
             className="hidden"
           />
         </div>
@@ -1635,6 +1860,20 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   )}
                 </div>
               )}
+
+              {/* Markdown block */}
+              {block.type === 'markdown' && (
+                <MarkdownBlockItem
+                  block={block}
+                  disabled={localNote.deleted}
+                  onUpdateContent={(newContent) =>
+                    handleUpdateBlockContent(block.id, newContent)
+                  }
+                  onReplaceFile={(newContent, fileName) =>
+                    handleUpdateMarkdownBlock(block.id, newContent, fileName)
+                  }
+                />
+              )}
             </div>
           ))}
 
@@ -1642,7 +1881,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           {localNote.blocks.length === 0 && !localNote.deleted && (
             <div className="border border-dashed border-[#E4DECE] rounded-xl p-6 text-center text-[#8A8478] space-y-3">
               <p className="text-xs">Esta nota está vacía. Añade tu primer bloque:</p>
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
                   onClick={() => handleAddBlock('heading')}
                   className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28]"
@@ -1674,6 +1913,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 >
                   <Columns3 className="w-3.5 h-3.5 text-[#8A8478]" />
                   <span>+ Tabla</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => mdFileInputRef.current?.click()}
+                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-[#3F6E64]" />
+                  <span>+ Importar .md</span>
                 </button>
               </div>
             </div>
