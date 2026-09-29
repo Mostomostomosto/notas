@@ -103,6 +103,12 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   }, [value]);
 
   useEffect(() => {
+    adjustHeight();
+    const t = setTimeout(adjustHeight, 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea || typeof ResizeObserver === 'undefined') return;
 
@@ -133,9 +139,14 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
         onChange(e.target.value);
         adjustHeight();
       }}
+      onInput={() => adjustHeight()}
       placeholder={placeholder}
       className={className}
-      style={{ overflow: 'hidden', minHeight: '44px' }}
+      style={{
+        overflow: 'hidden',
+        minHeight: '44px',
+        ...({ fieldSizing: 'content' } as React.CSSProperties),
+      }}
     />
   );
 };
