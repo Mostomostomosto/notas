@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -63,6 +63,82 @@ interface ColumnsModalState {
   blockId?: string;
   columns: ColumnItem[];
 }
+
+interface AutoResizeTextBlockProps {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+}
+
+const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
+  value,
+  disabled,
+  onChange,
+  placeholder,
+  className,
+}) => {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustHeight = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const scrollContainer = textarea.closest('.overflow-y-auto') as HTMLElement | null;
+    const prevScrollTop = scrollContainer
+      ? scrollContainer.scrollTop
+      : (typeof window !== 'undefined' ? window.scrollY || document.documentElement.scrollTop : 0);
+
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 44)}px`;
+
+    if (scrollContainer && scrollContainer.scrollTop !== prevScrollTop) {
+      scrollContainer.scrollTop = prevScrollTop;
+    }
+  };
+
+  useLayoutEffect(() => {
+    adjustHeight();
+  }, [value]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || typeof ResizeObserver === 'undefined') return;
+
+    let lastWidth = textarea.clientWidth;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newWidth = entry.contentRect.width;
+        if (Math.abs(newWidth - lastWidth) > 1) {
+          lastWidth = newWidth;
+          adjustHeight();
+        }
+      }
+    });
+
+    observer.observe(textarea);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => {
+        onChange(e.target.value);
+        adjustHeight();
+      }}
+      placeholder={placeholder}
+      className={className}
+      style={{ overflow: 'hidden', minHeight: '44px' }}
+    />
+  );
+};
 
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1256,12 +1332,11 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
               {/* Text block */}
               {block.type === 'text' && (
-                <textarea
+                <AutoResizeTextBlock
                   value={block.content}
                   disabled={localNote.deleted}
-                  onChange={(e) => handleUpdateBlockContent(block.id, e.target.value)}
+                  onChange={(val) => handleUpdateBlockContent(block.id, val)}
                   placeholder="Escribe aquí... usa **negrita** para resaltar"
-                  rows={Math.max(2, block.content.split('\n').length)}
                   className="w-full text-sm leading-relaxed text-[#2B2A28] outline-none bg-transparent resize-none placeholder-[#8A8478]/40 font-sans"
                 />
               )}
