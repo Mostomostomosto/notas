@@ -8,6 +8,8 @@ import {
   ChecklistBlock,
   ColumnsBlock,
   MarkdownBlock,
+  GalleryBlock,
+  GalleryItem,
   Tag,
   desaturateColor,
 } from '../db/db';
@@ -33,6 +35,9 @@ import {
   Eye,
   Pencil,
   Upload,
+  Images,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { marked } from 'marked';
 
@@ -304,6 +309,469 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   );
 };
 
+interface GalleryBlockViewProps {
+  block: GalleryBlock;
+  disabled?: boolean;
+  onUpdateTitle: (title: string) => void;
+  onAddImages: (items: GalleryItem[]) => void;
+  onDeleteImage: (itemId: string) => void;
+  onEditImage: (itemId: string, title: string, description: string) => void;
+  onOpenLightbox: (index: number) => void;
+}
+
+export const GalleryBlockView: React.FC<GalleryBlockViewProps> = ({
+  block,
+  disabled,
+  onUpdateTitle,
+  onAddImages,
+  onDeleteImage,
+  onEditImage,
+  onOpenLightbox,
+}) => {
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<{ id: string; title: string; description: string } | null>(null);
+
+  // Estados para el Modal de Añadir
+  const [modalTitle, setModalTitle] = useState('');
+  const [modalDesc, setModalDesc] = useState('');
+  const [modalFiles, setModalFiles] = useState<Array<{ file: File; url: string; title: string }>>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isModalDragOver, setIsModalDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetModalState = () => {
+    setModalTitle('');
+    setModalDesc('');
+    setModalFiles([]);
+    setIsModalDragOver(false);
+  };
+
+  const handleOpenAddModal = () => {
+    resetModalState();
+    setIsAddModalOpen(true);
+  };
+
+  const handleCloseAddModal = () => {
+    setIsAddModalOpen(false);
+    resetModalState();
+  };
+
+  const processFiles = (fileList: FileList | File[]) => {
+    const arr = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (arr.length === 0) return;
+
+    const readPromises = arr.map((file) => {
+      return new Promise<{ file: File; url: string; title: string }>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const rawName = file.name.replace(/\.[^/.]+$/, '');
+          resolve({
+            file,
+            url: reader.result as string,
+            title: rawName,
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(readPromises).then((results) => {
+      setModalFiles((prev) => [...prev, ...results]);
+      if (!modalTitle && results.length > 0) {
+        setModalTitle(results[0].title);
+      }
+    });
+  };
+
+  const handleConfirmAdd = () => {
+    if (modalFiles.length === 0) return;
+
+    const newItems: GalleryItem[] = modalFiles.map((mf, i) => ({
+      id: `img_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+      url: mf.url,
+      title: modalFiles.length === 1 && modalTitle ? modalTitle : mf.title,
+      description: modalDesc,
+      fileName: mf.file.name,
+    }));
+
+    onAddImages(newItems);
+    handleCloseAddModal();
+  };
+
+  const handleDirectDropOnEmptyState = (fileList: FileList) => {
+    const arr = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (arr.length === 0) return;
+
+    const readPromises = arr.map((file, i) => {
+      return new Promise<GalleryItem>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const rawName = file.name.replace(/\.[^/.]+$/, '');
+          resolve({
+            id: `img_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+            url: reader.result as string,
+            title: rawName,
+            fileName: file.name,
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(readPromises).then((newItems) => {
+      onAddImages(newItems);
+    });
+  };
+
+  return (
+    <div className="space-y-3 my-3">
+      {/* 1. Header / Subsection row (nodo-galeria.html) */}
+      <div className="flex items-center justify-between gap-3 pb-2 border-b border-[#E4DECE]">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <span className="text-[#3F6E64] flex items-center justify-center w-6 h-6 rounded-lg bg-[#3F6E64]/10 shrink-0">
+            <Images className="w-3.5 h-3.5" />
+          </span>
+          <input
+            type="text"
+            value={block.title || 'Galería de imágenes'}
+            disabled={disabled}
+            onChange={(e) => onUpdateTitle(e.target.value)}
+            placeholder="Título de la galería..."
+            className="font-semibold text-xs sm:text-sm text-[#2B2A28] bg-transparent outline-none hover:bg-black/5 focus:bg-white focus:ring-1 focus:ring-[#3F6E64]/30 px-2 py-0.5 rounded transition-colors flex-1 max-w-sm"
+          />
+          <span className="font-mono text-[11px] text-[#8A8478] bg-[#EDEAE2] px-2 py-0.5 rounded-full shrink-0">
+            {block.items.length} {block.items.length === 1 ? 'foto' : 'fotos'}
+          </span>
+        </div>
+
+        {!disabled && (
+          <button
+            type="button"
+            onClick={handleOpenAddModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2B2A28] hover:bg-black text-[#F7F4EE] text-xs font-semibold cursor-pointer shadow-xs transition-colors shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Añadir imagen</span>
+          </button>
+        )}
+      </div>
+
+      {/* 2. Masonry Gallery Content */}
+      {block.items.length > 0 ? (
+        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-3 space-y-3">
+          {block.items.map((item, idx) => (
+            <div
+              key={item.id}
+              onClick={() => onOpenLightbox(idx)}
+              className="break-inside-avoid rounded-xl overflow-hidden cursor-pointer relative group bg-[#1F1C22] border border-[#E4DECE] shadow-xs transition-all hover:border-[#3F6E64] hover:shadow-md"
+            >
+              <img
+                src={item.url}
+                alt={item.title || item.fileName || 'Foto'}
+                className="w-full h-auto block object-cover transition-transform duration-500 group-hover:scale-105"
+                loading="lazy"
+              />
+
+              {/* Overlay visual con gradiente sobre la imagen (nodo-galeria.html) */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-3 pointer-events-none">
+                {item.title && (
+                  <h4 className="font-semibold text-white text-xs leading-snug drop-shadow-sm">
+                    {item.title}
+                  </h4>
+                )}
+                {item.description && (
+                  <p className="text-[11px] text-white/80 line-clamp-2 mt-0.5 drop-shadow-sm">
+                    {item.description}
+                  </p>
+                )}
+              </div>
+
+              {/* Botones de acción en la esquina superior */}
+              {!disabled && (
+                <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-10">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingItem({
+                        id: item.id,
+                        title: item.title || '',
+                        description: item.description || '',
+                      });
+                    }}
+                    className="p-1.5 bg-black/60 hover:bg-black/90 text-white rounded-lg backdrop-blur-xs transition-colors cursor-pointer"
+                    title="Editar información"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteImage(item.id);
+                    }}
+                    className="p-1.5 bg-black/60 hover:bg-[#B4553F] text-white rounded-lg backdrop-blur-xs transition-colors cursor-pointer"
+                    title="Eliminar foto"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Estado vacío interactivo con dropzone */
+        <div
+          onClick={() => !disabled && handleOpenAddModal()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOver(true);
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            if (!disabled && e.dataTransfer.files?.length > 0) {
+              handleDirectDropOnEmptyState(e.dataTransfer.files);
+            }
+          }}
+          className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
+            isDragOver
+              ? 'border-[#3F6E64] bg-[#3F6E64]/5'
+              : 'border-[#E4DECE] bg-[#FAF9F5] hover:border-[#8A8478]'
+          }`}
+        >
+          <Images className="w-9 h-9 mx-auto mb-2 text-[#8A8478]/40" />
+          <p className="text-xs font-semibold text-[#2B2A28] mb-1">
+            Galería de imágenes vacía
+          </p>
+          <p className="text-[11px] text-[#8A8478] mb-3">
+            Arrastra fotos aquí o pulsa para añadir imágenes (admite selección múltiple).
+          </p>
+          {!disabled && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenAddModal();
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2B2A28] text-white rounded-xl text-xs font-semibold hover:bg-black transition-colors shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" /> Añadir imágenes
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 3. Modal Añadir Imagen (nodo-galeria.html) */}
+      {isAddModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-150"
+          onClick={handleCloseAddModal}
+        >
+          <div
+            className="bg-[#221E26] text-white border border-[#413B48] rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm text-[#EEE9E3]">Añadir imagen a la galería</h3>
+              <button
+                type="button"
+                onClick={handleCloseAddModal}
+                className="text-[#9C93A3] hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Dropzone */}
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#9C93A3]">
+                Imagen(es)
+              </label>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsModalDragOver(true);
+                }}
+                onDragLeave={() => setIsModalDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsModalDragOver(false);
+                  if (e.dataTransfer.files?.length > 0) {
+                    processFiles(e.dataTransfer.files);
+                  }
+                }}
+                className={`border-1.5 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all relative overflow-hidden bg-[#17141A] ${
+                  isModalDragOver
+                    ? 'border-[#4FC7AE] bg-[#2A2530]'
+                    : 'border-[#413B48] hover:border-[#4FC7AE]'
+                } ${modalFiles.length > 0 ? 'p-0 border-solid' : ''}`}
+              >
+                {modalFiles.length > 0 ? (
+                  <div className="relative">
+                    <img
+                      src={modalFiles[0].url}
+                      alt="Preview"
+                      className="w-full max-h-40 object-cover block"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-[#17141A]/80 backdrop-blur-xs p-2 text-left flex items-center justify-between text-[11px] font-mono text-white/90">
+                      <span className="truncate max-w-[200px]">{modalFiles[0].file.name}</span>
+                      {modalFiles.length > 1 && (
+                        <span className="bg-[#4FC7AE] text-[#17141A] px-1.5 py-0.2 rounded font-bold text-[10px]">
+                          +{modalFiles.length - 1} más
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-4 text-[#9C93A3]">
+                    <Upload className="w-6 h-6 mx-auto mb-1 text-[#645C6C]" />
+                    <div className="text-xs text-[#EEE9E3] font-medium">
+                      Arrastra una o varias imágenes o pulsa para elegir
+                    </div>
+                    <div className="text-[10px] text-[#645C6C] mt-0.5">JPG, PNG o WEBP</div>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={(e) => {
+                    if (e.target.files) processFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                />
+              </div>
+            </div>
+
+            {/* Título */}
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#9C93A3]">
+                Título
+              </label>
+              <input
+                type="text"
+                value={modalTitle}
+                onChange={(e) => setModalTitle(e.target.value)}
+                placeholder="Sin título"
+                className="w-full bg-[#17141A] border border-[#302B35] rounded-xl px-3 py-2 text-xs text-[#EEE9E3] outline-none focus:border-[#E8A33D] font-sans"
+              />
+            </div>
+
+            {/* Descripción */}
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#9C93A3]">
+                Descripción (opcional)
+              </label>
+              <input
+                type="text"
+                value={modalDesc}
+                onChange={(e) => setModalDesc(e.target.value)}
+                placeholder="Breve descripción para la tarjeta"
+                className="w-full bg-[#17141A] border border-[#302B35] rounded-xl px-3 py-2 text-xs text-[#EEE9E3] outline-none focus:border-[#E8A33D] font-sans"
+              />
+            </div>
+
+            {/* Acciones */}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleCloseAddModal}
+                className="px-3 py-1.5 rounded-xl text-xs font-medium text-[#9C93A3] hover:text-white hover:bg-[#332D3A] transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAdd}
+                disabled={modalFiles.length === 0}
+                className="px-4 py-1.5 bg-[#E8A33D] hover:bg-[#E8A33D]/90 text-[#1F1408] rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Añadir {modalFiles.length > 1 ? `(${modalFiles.length})` : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Modal Editar Imagen Existente */}
+      {editingItem && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none animate-in fade-in duration-150"
+          onClick={() => setEditingItem(null)}
+        >
+          <div
+            className="bg-[#221E26] text-white border border-[#413B48] rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm text-[#EEE9E3]">Editar información de la foto</h3>
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="text-[#9C93A3] hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#9C93A3]">
+                Título
+              </label>
+              <input
+                type="text"
+                value={editingItem.title}
+                onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })}
+                placeholder="Sin título"
+                className="w-full bg-[#17141A] border border-[#302B35] rounded-xl px-3 py-2 text-xs text-[#EEE9E3] outline-none focus:border-[#E8A33D]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-semibold uppercase tracking-wider text-[#9C93A3]">
+                Descripción
+              </label>
+              <input
+                type="text"
+                value={editingItem.description}
+                onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
+                placeholder="Breve descripción"
+                className="w-full bg-[#17141A] border border-[#302B35] rounded-xl px-3 py-2 text-xs text-[#EEE9E3] outline-none focus:border-[#E8A33D]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="px-3 py-1.5 rounded-xl text-xs font-medium text-[#9C93A3] hover:text-white hover:bg-[#332D3A] transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onEditImage(editingItem.id, editingItem.title, editingItem.description);
+                  setEditingItem(null);
+                }}
+                className="px-4 py-1.5 bg-[#E8A33D] hover:bg-[#E8A33D]/90 text-[#1F1408] rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs"
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDeleted }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mdFileInputRef = useRef<HTMLInputElement>(null);
@@ -323,6 +791,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     colIndex: number;
   } | null>(null);
 
+  // Estado para el visor Lightbox de galería
+  const [lightboxState, setLightboxState] = useState<{
+    blockId: string;
+    itemIndex: number;
+  } | null>(null);
+  const [activeLightboxDims, setActiveLightboxDims] = useState<string>('');
+
   // Estado local sincronizado para garantizar que la edición y la posición del cursor no salten
   const [localNote, setLocalNote] = useState<Note | null>(note);
   const pendingSaveRef = useRef<Note | null>(null);
@@ -338,6 +813,64 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       setLocalNote(null);
     }
   }, [note]);
+
+  // Datos del elemento activo en el Lightbox
+  const activeGalleryBlock = localNote?.blocks.find(
+    (b) => b.id === lightboxState?.blockId && b.type === 'gallery'
+  ) as GalleryBlock | undefined;
+
+  const activeGalleryItem =
+    activeGalleryBlock && lightboxState
+      ? activeGalleryBlock.items[lightboxState.itemIndex]
+      : undefined;
+
+  // Sonda de dimensiones naturales de la imagen para el Lightbox (nodo-galeria.html)
+  useEffect(() => {
+    if (!activeGalleryItem?.url) {
+      setActiveLightboxDims('');
+      return;
+    }
+    setActiveLightboxDims('Calculando…');
+    const probe = new Image();
+    probe.onload = () => {
+      setActiveLightboxDims(`${probe.naturalWidth} × ${probe.naturalHeight} px`);
+    };
+    probe.onerror = () => {
+      setActiveLightboxDims('Dimensiones no disponibles');
+    };
+    probe.src = activeGalleryItem.url;
+  }, [activeGalleryItem?.url]);
+
+  // Navegación por teclado en Lightbox (Escape para cerrar, flechas izquierda/derecha para navegar)
+  useEffect(() => {
+    if (!lightboxState || !activeGalleryBlock) return;
+
+    const handleLightboxKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setLightboxState(null);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setLightboxState((prev) => {
+          if (!prev) return null;
+          const newIdx =
+            prev.itemIndex > 0 ? prev.itemIndex - 1 : activeGalleryBlock.items.length - 1;
+          return { ...prev, itemIndex: newIdx };
+        });
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setLightboxState((prev) => {
+          if (!prev) return null;
+          const newIdx =
+            prev.itemIndex < activeGalleryBlock.items.length - 1 ? prev.itemIndex + 1 : 0;
+          return { ...prev, itemIndex: newIdx };
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleLightboxKeyDown);
+    return () => window.removeEventListener('keydown', handleLightboxKeyDown);
+  }, [lightboxState, activeGalleryBlock]);
 
   // Guardar inmediatamente cualquier cambio pendiente al desmontar o cambiar de nota
   const flushSave = () => {
@@ -701,7 +1234,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   };
 
   // Manipulación de bloques
-  const handleAddBlock = (type: 'heading' | 'text' | 'checklist' | 'markdown') => {
+  const handleAddBlock = (type: 'heading' | 'text' | 'checklist' | 'markdown' | 'gallery') => {
     pushDiscreteSnapshot();
     const newBlockId = `b_${Date.now()}`;
     let newBlock: NoteBlock;
@@ -718,6 +1251,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       setFocusItemId(newCheckId);
     } else if (type === 'markdown') {
       newBlock = { id: newBlockId, type: 'markdown', content: '', fileName: undefined };
+    } else if (type === 'gallery') {
+      newBlock = {
+        id: newBlockId,
+        type: 'gallery',
+        title: 'Galería completa',
+        items: [],
+      };
     } else {
       newBlock = { id: newBlockId, type: 'text', content: '' };
     }
@@ -1285,6 +1825,88 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     saveChangesDebounced(updated);
   };
 
+  // Manipulación de Galerías
+  const handleUpdateGalleryTitle = (blockId: string, newTitle: string) => {
+    if (!localNote) return;
+    registerTypingChange();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'gallery') {
+        return { ...b, title: newTitle };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    setLocalNote(updated);
+    saveChangesDebounced(updated);
+  };
+
+  const handleAddGalleryImages = (blockId: string, newItems: GalleryItem[]) => {
+    if (!localNote || newItems.length === 0) return;
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'gallery') {
+        return { ...b, items: [...b.items, ...newItems] };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+  };
+
+  const handleDeleteGalleryItem = (blockId: string, itemId: string) => {
+    if (!localNote) return;
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'gallery') {
+        return { ...b, items: b.items.filter((item) => item.id !== itemId) };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+  };
+
+  const handleEditGalleryItem = (
+    blockId: string,
+    itemId: string,
+    newTitle: string,
+    newDescription?: string
+  ) => {
+    if (!localNote) return;
+    pushDiscreteSnapshot();
+    const updatedBlocks = localNote.blocks.map((b) => {
+      if (b.id === blockId && b.type === 'gallery') {
+        return {
+          ...b,
+          items: b.items.map((item) =>
+            item.id === itemId
+              ? { ...item, title: newTitle, description: newDescription }
+              : item
+          ),
+        };
+      }
+      return b;
+    });
+    const updated: Note = {
+      ...localNote,
+      blocks: updatedBlocks,
+      updatedAt: new Date().toISOString(),
+    };
+    saveChangesImmediate(updated);
+  };
+
   const activeTag = tags.find((t) => t.name.toLowerCase() === localNote.tag?.toLowerCase());
 
   return (
@@ -1424,6 +2046,15 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             >
               <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
               <span>Imagen</span>
+            </button>
+
+            <button
+              onClick={() => handleAddBlock('gallery')}
+              className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white border border-transparent hover:border-[#E4DECE] text-[#2B2A28] transition-all cursor-pointer"
+              title="Añadir galería con diseño mosaico y visor lightbox"
+            >
+              <Images className="w-3.5 h-3.5 text-[#3F6E64]" />
+              <span>Galería</span>
             </button>
 
             <button
@@ -1875,6 +2506,23 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   }
                 />
               )}
+
+              {/* Gallery block */}
+              {block.type === 'gallery' && (
+                <GalleryBlockView
+                  block={block}
+                  disabled={localNote.deleted}
+                  onUpdateTitle={(newTitle) => handleUpdateGalleryTitle(block.id, newTitle)}
+                  onAddImages={(newItems) => handleAddGalleryImages(block.id, newItems)}
+                  onDeleteImage={(itemId) => handleDeleteGalleryItem(block.id, itemId)}
+                  onEditImage={(itemId, newTitle, newDesc) =>
+                    handleEditGalleryItem(block.id, itemId, newTitle, newDesc)
+                  }
+                  onOpenLightbox={(itemIndex) =>
+                    setLightboxState({ blockId: block.id, itemIndex })
+                  }
+                />
+              )}
             </div>
           ))}
 
@@ -1907,6 +2555,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-[#8A8478]" />
                   <span>+ Imagen</span>
+                </button>
+                <button
+                  onClick={() => handleAddBlock('gallery')}
+                  className="px-3 py-1.5 bg-[#F7F4EE] hover:bg-[#EFEBE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Images className="w-3.5 h-3.5 text-[#3F6E64]" />
+                  <span>+ Galería</span>
                 </button>
                 <button
                   onClick={() => handleOpenColumnsModal()}
@@ -2029,6 +2684,100 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               >
                 {columnsModal.blockId ? 'Guardar columnas' : 'Crear tabla'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal (nodo-galeria.html) */}
+      {lightboxState && activeGalleryBlock && activeGalleryItem && (
+        <div
+          className="fixed inset-0 bg-[#0A080C]/92 backdrop-blur-md flex flex-col items-center justify-center z-[110] p-4 sm:p-10 select-none animate-in fade-in duration-200"
+          onClick={() => setLightboxState(null)}
+        >
+          {/* Close button */}
+          <button
+            type="button"
+            onClick={() => setLightboxState(null)}
+            className="absolute top-5 right-6 w-9 h-9 rounded-xl flex items-center justify-center text-[#9C93A3] hover:text-white bg-[#1F1C22]/80 hover:bg-[#2A2530] border border-[#413B48] transition-all cursor-pointer shadow-lg z-20"
+            title="Cerrar (Esc)"
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          {/* Navigation buttons */}
+          {activeGalleryBlock.items.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLightboxState((prev) => {
+                    if (!prev) return null;
+                    const newIdx =
+                      prev.itemIndex > 0
+                        ? prev.itemIndex - 1
+                        : activeGalleryBlock.items.length - 1;
+                    return { ...prev, itemIndex: newIdx };
+                  });
+                }}
+                className="absolute left-4 sm:left-8 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full flex items-center justify-center text-white/80 hover:text-white bg-black/50 hover:bg-black/80 border border-white/10 backdrop-blur-xs transition-all cursor-pointer shadow-xl z-20"
+                title="Foto anterior (←)"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLightboxState((prev) => {
+                    if (!prev) return null;
+                    const newIdx =
+                      prev.itemIndex < activeGalleryBlock.items.length - 1
+                        ? prev.itemIndex + 1
+                        : 0;
+                    return { ...prev, itemIndex: newIdx };
+                  });
+                }}
+                className="absolute right-4 sm:right-8 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full flex items-center justify-center text-white/80 hover:text-white bg-black/50 hover:bg-black/80 border border-white/10 backdrop-blur-xs transition-all cursor-pointer shadow-xl z-20"
+                title="Siguiente foto (→)"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            </>
+          )}
+
+          {/* Figure & Caption */}
+          <div
+            className="max-w-[min(900px,90vw)] max-h-[calc(100vh-140px)] flex flex-col items-center w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={activeGalleryItem.url}
+              alt={activeGalleryItem.title || 'Foto'}
+              className="max-w-full max-h-[calc(100vh-200px)] rounded-xl object-contain shadow-2xl block border border-white/10"
+            />
+            <div className="w-full mt-3.5 flex items-end justify-between gap-4 px-1">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm sm:text-base leading-tight truncate">
+                  {activeGalleryItem.title || 'Sin título'}
+                </h3>
+                {activeGalleryItem.description && (
+                  <p className="text-xs text-[#9C93A3] mt-1 line-clamp-2">
+                    {activeGalleryItem.description}
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                {activeGalleryBlock.items.length > 1 && (
+                  <span className="font-mono text-xs text-[#8A8478] bg-[#1F1C22] px-2 py-0.5 rounded border border-[#413B48]">
+                    {lightboxState.itemIndex + 1} / {activeGalleryBlock.items.length}
+                  </span>
+                )}
+                <span className="font-mono text-xs text-[#4FC7AE] whitespace-nowrap">
+                  {activeLightboxDims}
+                </span>
+              </div>
             </div>
           </div>
         </div>

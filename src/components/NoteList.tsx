@@ -118,6 +118,11 @@ export const NoteList: React.FC<NoteListProps> = ({
           .trim();
         return clean.length > 100 ? `${clean.slice(0, 100)}...` : clean;
       }
+      if (b.type === 'gallery' && b.items && b.items.length > 0) {
+        const count = b.items.length;
+        const title = b.title ? `${b.title} · ` : '';
+        return `📷 ${title}${count} ${count === 1 ? 'foto' : 'fotos'}`;
+      }
     }
     return 'Nota vacía';
   };
@@ -125,8 +130,14 @@ export const NoteList: React.FC<NoteListProps> = ({
   // Obtener miniatura de imagen si tiene
   const getNoteThumbnail = (note: Note) => {
     const imgBlock = note.blocks.find((b) => b.type === 'image');
-    if (!imgBlock || imgBlock.type !== 'image') return null;
-    return imgBlock.localUrl || null;
+    if (imgBlock && imgBlock.type === 'image' && imgBlock.localUrl) {
+      return imgBlock.localUrl;
+    }
+    const galleryBlock = note.blocks.find((b) => b.type === 'gallery');
+    if (galleryBlock && galleryBlock.type === 'gallery' && galleryBlock.items?.length > 0) {
+      return galleryBlock.items[0].url;
+    }
+    return null;
   };
 
   const getViewTitle = () => {

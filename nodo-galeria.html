@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Nodo — organizador de proyectos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-app:#1F1C22;
+  --bg-canvas:#17141A;
+  --bg-ribbon:#211D25;
+  --bg-ink:#17141A;
+  --bg-panel:#221E26;
+  --bg-panel-row:#2A2530;
+  --bg-hover:#332D3A;
+  --border:#413B48;
+  --border-soft:#302B35;
+  --text-primary:#EEE9E3;
+  --text-secondary:#9C93A3;
+  --text-tertiary:#645C6C;
+  --accent:#E8A33D;
+  --accent-soft:rgba(232,163,61,.14);
+  --accent-dim:rgba(232,163,61,.35);
+
+  --t-proyecto:#8B8698;
+  --t-texto:#9B8CF0;
+  --t-lista:#F0806A;
+  --t-galeria:#4FC7AE;
+  --t-tabla:#5FA8F0;
+
+  --font-display:'Space Grotesk',sans-serif;
+  --font-ui:'Manrope',sans-serif;
+  --font-mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{
+  font-family:var(--font-ui);
+  background:var(--bg-app);
+  color:var(--text-primary);
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  user-select:none;
+  -webkit-font-smoothing:antialiased;
+  font-size:13px;
+}
+button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer;}
+::selection{background:var(--accent-dim);}
+
+/* ---------- TITLE BAR ---------- */
+.titlebar{
+  height:38px;min-height:38px;
+  display:flex;align-items:center;
+  padding:0 10px;
+  background:var(--bg-app);
+  border-bottom:1px solid var(--border-soft);
+  gap:2px;position:relative;z-index:60;
+}
+.app-menu{position:relative;}
+.app-mark{
+  display:flex;align-items:center;gap:7px;
+  padding:6px 10px 6px 8px;border-radius:6px;
+}
+.app-mark:hover,.app-mark.open{background:var(--bg-hover);}
+.app-glyph{width:16px;height:16px;border-radius:4px;background:var(--accent);flex-shrink:0;}
+.app-name{font-family:var(--font-display);font-weight:700;font-size:13px;letter-spacing:.05em;color:var(--text-primary);}
+.app-dropdown{
+  display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:210px;
+  background:var(--bg-ribbon);border:1px solid var(--border);border-radius:8px;
+  padding:5px;box-shadow:0 14px 34px -8px rgba(0,0,0,.6);z-index:70;
+}
+.app-menu.open .app-dropdown{display:block;}
+.d-item{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:7px 9px;border-radius:5px;font-size:12.5px;color:var(--text-primary);white-space:nowrap;}
+.d-item:hover{background:var(--bg-hover);}
+.d-item .shortcut{font-family:var(--font-mono);font-size:10.5px;color:var(--text-tertiary);}
+.d-sep{height:1px;background:var(--border-soft);margin:5px 4px;}
+
+.cmdk-hint{
+  margin-left:auto;display:flex;align-items:center;gap:6px;
+  padding:5px 9px;border:1px solid var(--border-soft);border-radius:6px;
+  color:var(--text-tertiary);font-size:11.5px;
+}
+.cmdk-hint kbd{font-family:var(--font-mono);font-size:10px;background:var(--bg-panel-row);padding:1px 5px;border-radius:3px;color:var(--text-secondary);}
+
+/* ---------- PROJECT TABS ---------- */
+.filetabs{
+  height:32px;min-height:32px;display:flex;align-items:flex-end;gap:2px;
+  padding:0 10px;background:var(--bg-app);border-bottom:1px solid var(--border);
+}
+.filetab{
+  position:relative;display:flex;align-items:center;gap:8px;height:26px;
+  padding:0 12px 0 10px;background:var(--bg-ribbon);border:1px solid var(--border-soft);
+  border-bottom:none;border-radius:6px 6px 0 0;font-size:11.5px;color:var(--text-secondary);cursor:pointer;
+}
+.filetab.active{background:var(--bg-canvas);color:var(--text-primary);border-color:var(--border);}
+.filetab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent);border-radius:2px 2px 0 0;}
+.filetab .dot{width:6px;height:6px;border-radius:50%;background:var(--t-galeria);flex-shrink:0;}
+.filetab .close{opacity:.45;font-size:12px;}
+.filetab .close:hover{opacity:1;}
+.filetab-add{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:15px;border-radius:6px;}
+.filetab-add:hover{background:var(--bg-hover);color:var(--text-primary);}
+
+/* ---------- RIBBON ---------- */
+.ribbon{background:var(--bg-ribbon);border-bottom:1px solid var(--border);flex-shrink:0;}
+.ribbon-row{display:flex;align-items:stretch;padding:7px 12px;gap:6px;overflow-x:auto;}
+.rgroup{
+  border:1px solid var(--border);border-radius:9px;background:var(--bg-ink);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:6px 9px;flex-shrink:0;
+}
+.rgroup-tools{display:flex;gap:4px;padding-bottom:5px;}
+.rgroup-label{font-size:9.5px;color:var(--text-tertiary);letter-spacing:.04em;text-transform:uppercase;}
+.rbtn{
+  width:30px;height:26px;display:flex;align-items:center;justify-content:center;
+  border-radius:6px;color:var(--text-secondary);
+}
+.rbtn svg{width:15px;height:15px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.rbtn:hover{background:var(--bg-hover);color:var(--text-primary);}
+.rbtn.type-texto:hover{color:var(--t-texto);}
+.rbtn.type-lista:hover{color:var(--t-lista);}
+.rbtn.type-galeria:hover{color:var(--t-galeria);}
+.rbtn.type-tabla:hover{color:var(--t-tabla);}
+.rbtn.active{background:var(--accent-soft);color:var(--accent);}
+.rdivider{width:1px;background:var(--border-soft);margin:4px 2px;flex-shrink:0;}
+
+/* ---------- WORKSPACE ---------- */
+.workspace{flex:1;display:flex;min-height:0;}
+
+.sidebar{
+  width:220px;flex-shrink:0;background:var(--bg-app);border-right:1px solid var(--border-soft);
+  padding:12px 8px;overflow-y:auto;
+}
+.sidebar-label{font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em;padding:4px 8px 8px;}
+.tree-item{
+  display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:6px;
+  font-size:12.5px;color:var(--text-secondary);cursor:pointer;
+}
+.tree-item:hover{background:var(--bg-hover);}
+.tree-item.active{background:var(--accent-soft);color:var(--text-primary);}
+.tree-item.root{font-weight:500;color:var(--text-primary);}
+.tree-chevron{
+  width:14px;height:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:var(--text-tertiary);border-radius:3px;transition:transform .12s ease;
+}
+.tree-chevron:hover{color:var(--text-primary);}
+.tree-chevron svg{width:9px;height:9px;stroke:currentColor;stroke-width:2.4;fill:none;}
+.tree-chevron.spacer{visibility:hidden;}
+.tree-item.expanded .tree-chevron svg{transform:rotate(90deg);transform-origin:center;}
+.tree-icon{width:14px;height:14px;flex-shrink:0;color:var(--ticon-color,var(--text-tertiary));}
+.tree-icon svg{width:100%;height:100%;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.tree-item.lvl1{padding-left:8px;}
+.tree-item.lvl2{padding-left:26px;}
+.tree-children{overflow:hidden;}
+.tree-children.collapsed{display:none;}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-canvas);}
+.breadcrumb{
+  padding:12px 24px 0;font-size:11.5px;color:var(--text-tertiary);display:flex;align-items:center;gap:6px;
+}
+.breadcrumb b{color:var(--text-secondary);font-weight:500;}
+
+.main-scroll{flex:1;overflow-y:auto;padding:16px 24px 24px;}
+.page-title{font-family:var(--font-display);font-size:22px;font-weight:600;margin-bottom:4px;}
+.page-sub{font-size:12px;color:var(--text-tertiary);margin-bottom:20px;}
+
+.card-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;
+}
+.card{
+  background:var(--bg-panel);border:1px solid var(--border-soft);border-left:3px solid var(--card-color);
+  border-radius:10px;padding:13px 14px;cursor:pointer;
+}
+.card:hover{border-color:var(--border);background:var(--bg-panel-row);}
+.card .ctop{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+.card .cicon{width:16px;height:16px;color:var(--card-color);flex-shrink:0;}
+.card .cicon svg{width:100%;height:100%;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.card .ctitle{font-size:13px;font-weight:500;color:var(--text-primary);}
+.card .cdesc{font-size:11.5px;color:var(--text-tertiary);line-height:1.5;}
+
+.content-divider{height:1px;background:var(--border-soft);margin:22px 0 16px;}
+.content-label{font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+.image-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;}
+.img-tile{
+  aspect-ratio:4/3;background:var(--bg-panel);border:1px solid var(--border-soft);border-radius:8px;
+  background-image:linear-gradient(135deg,var(--bg-panel-row) 25%,transparent 25%,transparent 50%,var(--bg-panel-row) 50%,var(--bg-panel-row) 75%,transparent 75%,transparent);
+  background-size:14px 14px;
+}
+.img-tile-add{
+  display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--text-tertiary);
+  background-image:none;cursor:pointer;
+}
+.img-tile-add:hover{color:var(--text-primary);border-color:var(--border);}
+
+/* ---------- GALLERY CONTENT (featured + masonry) ---------- */
+.gallery-block{margin-top:2px;}
+
+.subsection-row{display:flex;align-items:baseline;gap:9px;margin:22px 0 12px;}
+.subsection-row .content-label{margin-bottom:0;}
+.subsection-row .count{font-family:var(--font-mono);font-size:10.5px;color:var(--text-tertiary);}
+.subsection-row::after{content:"";flex:1;height:1px;background:var(--border-soft);}
+
+.feat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.feat-card{
+  position:relative;border-radius:9px;overflow:hidden;background:var(--bg-panel);
+  border:1px solid var(--border-soft);aspect-ratio:4/5;cursor:pointer;
+}
+.feat-card:hover{border-color:var(--t-galeria);}
+.feat-card img{
+  width:100%;height:100%;object-fit:cover;display:block;
+  filter:saturate(.94) contrast(1.02);transition:transform .5s cubic-bezier(.2,.7,.2,1);
+}
+.feat-card:hover img{transform:scale(1.04);}
+.feat-card::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(23,20,26,0) 42%,rgba(23,20,26,.92) 100%);
+}
+.feat-tag{
+  position:absolute;top:9px;left:9px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;
+  color:var(--t-galeria);background:rgba(23,20,26,.6);border:1px solid var(--border);
+  padding:2px 6px;border-radius:4px;backdrop-filter:blur(2px);
+}
+.feat-caption{position:absolute;left:11px;right:11px;bottom:10px;z-index:2;}
+.feat-caption h4{font-family:var(--font-display);font-weight:600;font-size:13.5px;color:var(--text-primary);margin-bottom:2px;}
+.feat-caption p{font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);}
+
+.masonry{column-count:2;column-gap:10px;}
+@media (min-width:900px){.masonry{column-count:3;}}
+@media (min-width:1300px){.masonry{column-count:4;}}
+
+.m-frame{
+  position:relative;break-inside:avoid;margin:0 0 10px;border-radius:9px;overflow:hidden;
+  cursor:pointer;background:var(--bg-panel);border:1px solid transparent;transition:border-color .2s ease;
+}
+.m-frame:hover{border-color:var(--t-galeria);}
+.m-frame img{display:block;width:100%;height:auto;}
+.m-overlay{
+  position:absolute;left:0;right:0;bottom:0;padding:22px 12px 10px;
+  background:linear-gradient(180deg,rgba(23,20,26,0) 0%,rgba(23,20,26,.86) 60%,rgba(23,20,26,.9) 100%);
+  opacity:0;transform:translateY(6px);transition:opacity .16s ease,transform .16s ease;pointer-events:none;
+}
+.m-frame:hover .m-overlay{opacity:1;transform:translateY(0);}
+.m-overlay h4{font-family:var(--font-display);font-weight:600;font-size:12.5px;color:#fff;margin-bottom:2px;}
+.m-overlay p{font-size:11px;color:rgba(255,255,255,.75);}
+
+/* ---------- ADD IMAGE BUTTON ---------- */
+.btn-add-image{
+  display:flex;align-items:center;gap:5px;padding:5px 10px;border-radius:7px;
+  background:var(--bg-panel);border:1px solid var(--border-soft);color:var(--accent);font-size:11.5px;font-weight:500;
+  flex-shrink:0;
+}
+.btn-add-image:hover{background:var(--bg-hover);border-color:var(--border);}
+.btn-add-image svg{width:13px;height:13px;stroke:currentColor;stroke-width:2.2;fill:none;stroke-linecap:round;}
+
+/* ---------- MODAL (añadir imagen) ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(10,8,12,.6);
+  display:none;align-items:center;justify-content:center;z-index:100;
+}
+.modal-overlay.open{display:flex;}
+.modal-card{
+  width:380px;background:var(--bg-ribbon);border:1px solid var(--border);border-radius:12px;
+  padding:18px;box-shadow:0 24px 60px -12px rgba(0,0,0,.55);
+}
+.modal-title{font-family:var(--font-display);font-size:15px;font-weight:600;margin-bottom:14px;}
+.modal-field{margin-bottom:12px;}
+.modal-field label{display:block;font-size:11px;color:var(--text-tertiary);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;}
+.modal-field input{
+  width:100%;background:var(--bg-ink);border:1px solid var(--border-soft);border-radius:7px;
+  padding:8px 10px;font-size:13px;color:var(--text-primary);font-family:inherit;
+}
+.modal-field input:focus{outline:none;border-color:var(--accent-dim);}
+.modal-field input::placeholder{color:var(--text-tertiary);}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+.modal-btn{padding:7px 14px;border-radius:7px;font-size:12.5px;font-weight:500;}
+.modal-btn.cancel{color:var(--text-secondary);}
+.modal-btn.cancel:hover{background:var(--bg-hover);}
+.modal-btn.create{background:var(--accent);color:#1F1408;}
+.modal-btn.create:hover{opacity:.9;}
+.modal-btn.create:disabled{opacity:.4;cursor:default;}
+
+.dropzone{
+  border:1.5px dashed var(--border);border-radius:9px;padding:22px 14px;text-align:center;
+  color:var(--text-tertiary);cursor:pointer;position:relative;overflow:hidden;background:var(--bg-ink);
+}
+.dropzone:hover{border-color:var(--t-galeria);color:var(--text-secondary);}
+.dropzone.dragover{border-color:var(--t-galeria);background:var(--bg-panel-row);}
+.dropzone svg{width:22px;height:22px;stroke:currentColor;stroke-width:1.6;fill:none;margin-bottom:6px;}
+.dropzone .dz-text{font-size:12px;}
+.dropzone .dz-sub{font-size:10.5px;color:var(--text-tertiary);margin-top:2px;}
+.dropzone input[type="file"]{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.dropzone.has-image{padding:0;border-style:solid;}
+.dropzone.has-image img{display:block;width:100%;max-height:160px;object-fit:cover;}
+.dropzone .dz-filename{
+  position:absolute;left:0;right:0;bottom:0;padding:6px 10px;font-size:10.5px;font-family:var(--font-mono);
+  color:#fff;background:rgba(23,20,26,.75);text-align:left;
+}
+
+/* ---------- LIGHTBOX ---------- */
+.lightbox-overlay{
+  position:fixed;inset:0;background:rgba(10,8,12,.88);display:none;
+  align-items:center;justify-content:center;z-index:110;flex-direction:column;padding:40px;
+}
+.lightbox-overlay.open{display:flex;}
+.lightbox-figure{max-width:min(900px,90vw);max-height:calc(100vh - 140px);display:flex;flex-direction:column;align-items:center;}
+.lightbox-figure img{max-width:100%;max-height:calc(100vh - 200px);border-radius:8px;display:block;object-fit:contain;}
+.lightbox-caption{width:100%;margin-top:14px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;}
+.lightbox-caption h3{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:3px;}
+.lightbox-caption p{font-size:12px;color:var(--text-secondary);}
+.lightbox-dims{font-family:var(--font-mono);font-size:11px;color:var(--t-galeria);white-space:nowrap;padding-bottom:2px;}
+.lightbox-close{
+  position:absolute;top:20px;right:24px;width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;color:var(--text-secondary);background:var(--bg-panel);
+  border:1px solid var(--border-soft);font-size:16px;
+}
+.lightbox-close:hover{color:var(--text-primary);background:var(--bg-hover);}
+
+/* ---------- STATUS BAR ---------- */
+.statusbar{
+  height:26px;min-height:26px;display:flex;align-items:center;gap:14px;
+  padding:0 14px;background:var(--bg-app);border-top:1px solid var(--border-soft);
+  font-size:11px;color:var(--text-tertiary);
+}
+.statusbar .divider{width:1px;height:12px;background:var(--border-soft);}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <div class="app-menu" id="appMenu">
+    <div class="app-mark" id="appMark">
+      <div class="app-glyph"></div>
+      <span class="app-name">NODO</span>
+    </div>
+    <div class="app-dropdown">
+      <div class="d-item">Nuevo proyecto <span class="shortcut">⌘N</span></div>
+      <div class="d-item">Abrir proyecto <span class="shortcut">⌘O</span></div>
+      <div class="d-sep"></div>
+      <div class="d-item">Exportar proyecto</div>
+      <div class="d-item">Preferencias <span class="shortcut">⌘,</span></div>
+      <div class="d-sep"></div>
+      <div class="d-item">Acerca de Nodo</div>
+    </div>
+  </div>
+  <div class="cmdk-hint"><span>Buscar o ejecutar comando</span><kbd>⌘K</kbd></div>
+</div>
+
+<div class="filetabs">
+  <div class="filetab active"><span class="dot" style="background:var(--t-galeria)"></span>Lanzamiento web<span class="close">✕</span></div>
+  <div class="filetab"><span class="dot" style="background:var(--t-lista)"></span>Mudanza<span class="close">✕</span></div>
+  <div class="filetab"><span class="dot" style="background:var(--t-texto)"></span>Tesis<span class="close">✕</span></div>
+  <div class="filetab-add">+</div>
+</div>
+
+<div class="ribbon">
+  <div class="ribbon-row">
+    <div class="rgroup">
+      <div class="rgroup-tools">
+        <button class="rbtn type-texto" title="Texto"><svg viewBox="0 0 24 24"><path d="M6 5h12M12 5v14"/></svg></button>
+        <button class="rbtn type-lista" title="Lista de tareas"><svg viewBox="0 0 24 24"><path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/></svg></button>
+        <button class="rbtn type-galeria" title="Galería de imágenes"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 15l-5-5-11 11"/></svg></button>
+        <button class="rbtn type-tabla" title="Tabla"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M9 4v16"/></svg></button>
+      </div>
+      <div class="rgroup-label">Nueva página</div>
+    </div>
+
+    <div class="rgroup">
+      <div class="rgroup-tools">
+        <button class="rbtn active" title="Vista de tarjetas"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
+        <button class="rbtn" title="Vista de lista"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      </div>
+      <div class="rgroup-label">Vista</div>
+    </div>
+
+    <div class="rgroup">
+      <div class="rgroup-tools">
+        <button class="rbtn" title="Deshacer"><svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-1"/></svg></button>
+        <button class="rbtn" title="Rehacer"><svg viewBox="0 0 24 24"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h1"/></svg></button>
+        <button class="rbtn" title="Buscar en el proyecto"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg></button>
+      </div>
+      <div class="rgroup-label">Editar</div>
+    </div>
+  </div>
+</div>
+
+<div class="workspace">
+  <div class="sidebar">
+    <div class="sidebar-label">Lanzamiento web</div>
+
+    <div class="tree-item root lvl1" data-target="root">
+      <span class="tree-chevron spacer"></span>
+      <span class="tree-icon" style="--ticon-color:var(--t-proyecto)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></span>
+      Lanzamiento web
+    </div>
+
+    <div class="tree-item lvl1 expanded active" data-toggle="galeria">
+      <span class="tree-chevron"><svg viewBox="0 0 24 24"><path d="M4 2l5 5-5 5"/></svg></span>
+      <span class="tree-icon" style="--ticon-color:var(--t-galeria)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 15l-5-5-11 11"/></svg></span>
+      Galería de imágenes
+    </div>
+    <div class="tree-children" id="children-galeria">
+      <div class="tree-item lvl2" data-target="fotos">
+        <span class="tree-icon" style="--ticon-color:var(--t-galeria)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 15l-5-5-11 11"/></svg></span>
+        Fotos de producto
+      </div>
+      <div class="tree-item lvl2" data-target="referencias">
+        <span class="tree-icon" style="--ticon-color:var(--t-texto)"><svg viewBox="0 0 24 24"><path d="M6 5h12M12 5v14"/></svg></span>
+        Referencias visuales
+      </div>
+    </div>
+
+    <div class="tree-item lvl1" data-target="lista">
+      <span class="tree-chevron spacer"></span>
+      <span class="tree-icon" style="--ticon-color:var(--t-lista)"><svg viewBox="0 0 24 24"><path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/></svg></span>
+      Lista de tareas
+    </div>
+
+    <div class="tree-item lvl1" data-target="notas">
+      <span class="tree-chevron spacer"></span>
+      <span class="tree-icon" style="--ticon-color:var(--t-texto)"><svg viewBox="0 0 24 24"><path d="M6 5h12M12 5v14"/></svg></span>
+      Notas de reunión
+    </div>
+
+    <div class="tree-item lvl1" data-target="presupuesto">
+      <span class="tree-chevron spacer"></span>
+      <span class="tree-icon" style="--ticon-color:var(--t-tabla)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M9 4v16"/></svg></span>
+      Presupuesto
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="breadcrumb">Lanzamiento web <span>/</span> <b>Galería de imágenes</b></div>
+    <div class="main-scroll">
+      <div class="page-title">Galería de imágenes</div>
+      <div class="page-sub">2 elementos</div>
+
+      <div class="card-grid">
+        <div class="card" style="--card-color:var(--t-galeria)">
+          <div class="ctop">
+            <div class="cicon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 15l-5-5-11 11"/></svg></div>
+            <div class="ctitle">Fotos de producto</div>
+          </div>
+          <div class="cdesc">9 imágenes</div>
+        </div>
+
+        <div class="card" style="--card-color:var(--t-texto)">
+          <div class="ctop">
+            <div class="cicon"><svg viewBox="0 0 24 24"><path d="M6 5h12M12 5v14"/></svg></div>
+            <div class="ctitle">Referencias visuales</div>
+          </div>
+          <div class="cdesc">Documento de texto</div>
+        </div>
+      </div>
+
+      <div class="content-divider"></div>
+
+      <div class="gallery-block">
+
+
+        <div class="subsection-row">
+          <div class="content-label">Galería completa</div>
+          <span class="count">10 fotos</span>
+          <button class="btn-add-image" id="openAddImage"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Añadir imagen</button>
+        </div>
+        <div class="masonry">
+          <div class="m-frame" data-title="Estanque de montaña" data-desc="Peonías &amp; nenúfares">
+            <img src="gallery/gal-1.jpg" alt="Estanque con nenúfares y peonías rosas junto a un bosque de montaña">
+            <div class="m-overlay"><h4>Estanque de montaña</h4><p>Peonías &amp; nenúfares</p></div>
+          </div>
+          <div class="m-frame" data-title="Salar al atardecer" data-desc="Patrones hexagonales en la sal">
+            <img src="gallery/gal-2.jpg" alt="Salar al atardecer con patrones hexagonales en la sal">
+            <div class="m-overlay"><h4>Salar al atardecer</h4><p>Patrones hexagonales en la sal</p></div>
+          </div>
+          <div class="m-frame" data-title="Costa al atardecer" data-desc="Marea baja, luz dorada">
+            <img src="gallery/gal-3.jpg" alt="Atardecer dorado sobre una playa rocosa con reflejo en la arena mojada">
+            <div class="m-overlay"><h4>Costa al atardecer</h4><p>Marea baja, luz dorada</p></div>
+          </div>
+          <div class="m-frame" data-title="Cielo reflejado" data-desc="Nubes rosadas y violeta en el lago">
+            <img src="gallery/gal-4.jpg" alt="Cielo de nubes rosadas y violetas reflejado en un lago en calma">
+            <div class="m-overlay"><h4>Cielo reflejado</h4><p>Nubes rosadas y violeta en el lago</p></div>
+          </div>
+          <div class="m-frame" data-title="Arco de roca" data-desc="Formación natural en la playa">
+            <img src="gallery/gal-5.jpg" alt="Arco de roca natural en una playa de arena junto al mar">
+            <div class="m-overlay"><h4>Arco de roca</h4><p>Formación natural en la playa</p></div>
+          </div>
+          <div class="m-frame" data-title="Colinas iluminadas" data-desc="Luz y sombra sobre el terreno">
+            <img src="gallery/gal-6.jpg" alt="Colinas verdes iluminadas con luz y sombra y árboles solitarios">
+            <div class="m-overlay"><h4>Colinas iluminadas</h4><p>Luz y sombra sobre el terreno</p></div>
+          </div>
+          <div class="m-frame" data-title="Siluetas al anochecer" data-desc="Dos árboles junto al agua">
+            <img src="gallery/gal-7.jpg" alt="Siluetas de dos árboles sobre el agua al anochecer">
+            <div class="m-overlay"><h4>Siluetas al anochecer</h4><p>Dos árboles junto al agua</p></div>
+          </div>
+          <div class="m-frame" data-title="Costa volcánica" data-desc="Olas rompiendo en la roca">
+            <img src="gallery/gal-8.jpg" alt="Costa rocosa con formaciones volcánicas y olas rompiendo">
+            <div class="m-overlay"><h4>Costa volcánica</h4><p>Olas rompiendo en la roca</p></div>
+          </div>
+          <div class="m-frame" data-title="Lago glaciar" data-desc="Aguas turquesa">
+            <img src="gallery/gal-9.jpg" alt="Lago turquesa rodeado de picos rocosos y bosque de coníferas">
+            <div class="m-overlay"><h4>Lago glaciar</h4><p>Aguas turquesa</p></div>
+          </div>
+          <div class="m-frame" data-title="Río entre bosques" data-desc="Flores amarillas silvestres">
+            <img src="gallery/gal-10.jpg" alt="Río entre bosques con flores amarillas silvestres en primer plano">
+            <div class="m-overlay"><h4>Río entre bosques</h4><p>Flores amarillas silvestres</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="statusbar">
+  <span>Proyecto: Lanzamiento web</span>
+  <div class="divider"></div>
+  <span>4 páginas</span>
+  <div class="divider"></div>
+  <span>Última edición hace 3 min</span>
+</div>
+
+<div class="modal-overlay" id="addImageOverlay">
+  <div class="modal-card">
+    <div class="modal-title">Añadir imagen</div>
+
+    <div class="modal-field">
+      <label>Imagen</label>
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <div class="dz-text">Arrastra una imagen o haz clic para elegir</div>
+        <div class="dz-sub">JPG, PNG o WEBP</div>
+        <input type="file" id="fileInput" accept="image/*">
+      </div>
+    </div>
+
+    <div class="modal-field">
+      <label>Título</label>
+      <input type="text" id="imgTitleInput" placeholder="Sin título">
+    </div>
+    <div class="modal-field">
+      <label>Descripción (opcional)</label>
+      <input type="text" id="imgDescInput" placeholder="Breve descripción para la tarjeta">
+    </div>
+
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="addImageCancel">Cancelar</button>
+      <button class="modal-btn create" id="addImageCreate" disabled>Añadir</button>
+    </div>
+  </div>
+</div>
+
+<div class="lightbox-overlay" id="lightboxOverlay">
+  <button class="lightbox-close" id="lightboxClose">✕</button>
+  <div class="lightbox-figure">
+    <img id="lightboxImg" src="" alt="">
+    <div class="lightbox-caption">
+      <div>
+        <h3 id="lightboxTitle"></h3>
+        <p id="lightboxDesc"></p>
+      </div>
+      <div class="lightbox-dims" id="lightboxDims">— × — px</div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('appMark').addEventListener('click',(e)=>{
+  e.stopPropagation();
+  document.getElementById('appMenu').classList.toggle('open');
+});
+document.addEventListener('click',()=>{document.getElementById('appMenu').classList.remove('open');});
+
+document.querySelectorAll('.filetab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.filetab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+  });
+});
+
+document.querySelectorAll('.card').forEach(c=>{
+  c.addEventListener('click',()=>{ /* navegación a la página */ });
+});
+
+document.querySelectorAll('.tree-item').forEach(item=>{
+  item.addEventListener('click',(e)=>{
+    if(item.dataset.toggle){
+      e.stopPropagation();
+      item.classList.toggle('expanded');
+      document.getElementById('children-'+item.dataset.toggle).classList.toggle('collapsed');
+    }
+    document.querySelectorAll('.tree-item').forEach(t=>t.classList.remove('active'));
+    item.classList.add('active');
+  });
+});
+
+document.querySelectorAll('.tree-chevron').forEach(ch=>{
+  ch.addEventListener('click',(e)=>{
+    e.stopPropagation();
+    ch.closest('.tree-item').click();
+  });
+});
+
+/* ---------- MODAL: AÑADIR IMAGEN ---------- */
+const addImageOverlay=document.getElementById('addImageOverlay');
+const dropzone=document.getElementById('dropzone');
+const fileInput=document.getElementById('fileInput');
+const imgTitleInput=document.getElementById('imgTitleInput');
+const imgDescInput=document.getElementById('imgDescInput');
+const addImageCreate=document.getElementById('addImageCreate');
+let chosenFile=null;
+
+document.getElementById('openAddImage').addEventListener('click',()=>{
+  chosenFile=null;
+  imgTitleInput.value='';
+  imgDescInput.value='';
+  fileInput.value='';
+  dropzone.classList.remove('has-image');
+  dropzone.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><div class="dz-text">Arrastra una imagen o haz clic para elegir</div><div class="dz-sub">JPG, PNG o WEBP</div><input type="file" id="fileInput" accept="image/*">';
+  document.getElementById('fileInput').addEventListener('change',handleFile);
+  addImageCreate.disabled=true;
+  addImageOverlay.classList.add('open');
+});
+
+function handleFile(e){
+  const file=e.target.files[0];
+  if(!file) return;
+  chosenFile=file;
+  const url=URL.createObjectURL(file);
+  dropzone.classList.add('has-image');
+  dropzone.innerHTML='<img src="'+url+'"><div class="dz-filename">'+file.name+'</div><input type="file" id="fileInput" accept="image/*">';
+  document.getElementById('fileInput').addEventListener('change',handleFile);
+  addImageCreate.disabled=false;
+}
+fileInput.addEventListener('change',handleFile);
+
+['dragover','dragleave','drop'].forEach(evt=>{
+  dropzone.addEventListener(evt,(e)=>{
+    e.preventDefault();
+    if(evt==='dragover') dropzone.classList.add('dragover');
+    if(evt==='dragleave') dropzone.classList.remove('dragover');
+    if(evt==='drop'){
+      dropzone.classList.remove('dragover');
+      if(e.dataTransfer.files[0]) handleFile({target:{files:e.dataTransfer.files}});
+    }
+  });
+});
+
+function closeAddImage(){ addImageOverlay.classList.remove('open'); }
+document.getElementById('addImageCancel').addEventListener('click',closeAddImage);
+document.getElementById('addImageCreate').addEventListener('click',closeAddImage);
+addImageOverlay.addEventListener('click',(e)=>{ if(e.target===addImageOverlay) closeAddImage(); });
+
+/* ---------- LIGHTBOX ---------- */
+const lightboxOverlay=document.getElementById('lightboxOverlay');
+const lightboxImg=document.getElementById('lightboxImg');
+const lightboxTitle=document.getElementById('lightboxTitle');
+const lightboxDesc=document.getElementById('lightboxDesc');
+const lightboxDims=document.getElementById('lightboxDims');
+
+function openLightbox(src,title,desc){
+  lightboxImg.src=src;
+  lightboxTitle.textContent=title||'Sin título';
+  lightboxDesc.textContent=desc||'';
+  lightboxDims.textContent='Calculando…';
+  lightboxOverlay.classList.add('open');
+  const probe=new Image();
+  probe.onload=()=>{ lightboxDims.textContent=probe.naturalWidth+' × '+probe.naturalHeight+' px'; };
+  probe.onerror=()=>{ lightboxDims.textContent='Dimensiones no disponibles'; };
+  probe.src=src;
+}
+function closeLightbox(){ lightboxOverlay.classList.remove('open'); }
+
+document.querySelectorAll('.m-frame, .feat-card').forEach(el=>{
+  el.addEventListener('click',()=>{
+    const img=el.querySelector('img');
+    openLightbox(img.getAttribute('src'), el.dataset.title, el.dataset.desc);
+  });
+});
+document.getElementById('lightboxClose').addEventListener('click',closeLightbox);
+lightboxOverlay.addEventListener('click',(e)=>{ if(e.target===lightboxOverlay) closeLightbox(); });
+document.addEventListener('keydown',(e)=>{
+  if(e.key==='Escape'){ closeLightbox(); closeAddImage(); }
+});
+</script>
+</body>
+</html>
