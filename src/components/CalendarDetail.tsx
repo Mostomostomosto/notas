@@ -74,8 +74,9 @@ export const CalendarDetail: React.FC<CalendarDetailProps> = ({
       </div>
 
       {/* Events List */}
-      <div className="flex-1 overflow-y-auto p-8 space-y-4 max-w-3xl w-full">
-        {dayEvents.length === 0 ? (
+      <div className="flex-1 overflow-y-auto w-full">
+        <div className="w-[90%] mx-auto py-8 space-y-4">
+          {dayEvents.length === 0 ? (
           <div className="h-72 border border-dashed border-[#E4DECE] rounded-2xl flex flex-col items-center justify-center p-8 text-center text-[#8A8478] space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#F7F4EE] border border-[#E4DECE] flex items-center justify-center text-[#8A8478]">
               <CalendarCheck2 className="w-6 h-6 opacity-40" />
@@ -174,6 +175,7 @@ export const CalendarDetail: React.FC<CalendarDetailProps> = ({
             })}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
