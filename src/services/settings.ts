@@ -1,5 +1,7 @@
 export interface AppSettings {
   driveFolderName: string;
+  dropboxFolderName: string;
+  dropboxAppKey: string;
   autoSync: boolean;
 }
 
@@ -7,6 +9,8 @@ const SETTINGS_KEY = 'app_notas_settings';
 
 const DEFAULT_SETTINGS: AppSettings = {
   driveFolderName: 'MiAppNotas',
+  dropboxFolderName: 'MiAppNotas',
+  dropboxAppKey: '',
   autoSync: true,
 };
 
@@ -17,6 +21,8 @@ export function getSettings(): AppSettings {
     const parsed = JSON.parse(raw);
     return {
       driveFolderName: (parsed.driveFolderName || DEFAULT_SETTINGS.driveFolderName).trim(),
+      dropboxFolderName: (parsed.dropboxFolderName || DEFAULT_SETTINGS.dropboxFolderName).trim(),
+      dropboxAppKey: (parsed.dropboxAppKey || '').trim(),
       autoSync: parsed.autoSync ?? DEFAULT_SETTINGS.autoSync,
     };
   } catch {
@@ -31,8 +37,13 @@ export function saveSettings(newSettings: Partial<AppSettings>): AppSettings {
     ...newSettings,
   };
   if (newSettings.driveFolderName) {
-    // Sanitizar nombre de carpeta
     updated.driveFolderName = newSettings.driveFolderName.trim().replace(/[/\\:*?"<>|]/g, '_') || 'MiAppNotas';
+  }
+  if (newSettings.dropboxFolderName) {
+    updated.dropboxFolderName = newSettings.dropboxFolderName.trim().replace(/[/\\:*?"<>|]/g, '_') || 'MiAppNotas';
+  }
+  if (newSettings.dropboxAppKey !== undefined) {
+    updated.dropboxAppKey = newSettings.dropboxAppKey.trim();
   }
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
   return updated;

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Tag, desaturateColor, isNoteArchived } from '../db/db';
 import { SyncState, scheduleSync } from '../services/syncEngine';
-import { UserProfile } from '../services/googleAuth';
+import { DropboxUserProfile } from '../services/dropboxAuth';
 import {
   FileText,
   Pin,
@@ -38,9 +38,9 @@ interface SidebarProps {
   syncState: SyncState;
   syncMessage: string;
   onTriggerSync: () => void;
-  userProfile: UserProfile | null;
-  onConnectGoogle: () => void;
-  onLogoutGoogle: () => void;
+  userProfile: DropboxUserProfile | null;
+  onConnectDropbox: () => void;
+  onLogoutDropbox: () => void;
   token: string | null;
   onOpenPreferences: () => void;
 }
@@ -52,8 +52,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   syncMessage,
   onTriggerSync,
   userProfile,
-  onConnectGoogle,
-  onLogoutGoogle,
+  onConnectDropbox,
+  onLogoutDropbox,
   token,
   onOpenPreferences,
 }) => {
@@ -1070,19 +1070,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Footer: Google Drive Sync & Auth Status */}
+      {/* Footer: Dropbox Sync & Auth Status */}
       <div className="p-3 border-t border-[#E4DECE] bg-[#EDEAE2] space-y-2">
         {/* Sync Status Badge */}
         <div className="flex items-center justify-between px-2 py-1.5 bg-white/60 rounded-lg border border-[#E4DECE]/70 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             {syncState === 'syncing' ? (
-              <RefreshCw className="w-3.5 h-3.5 text-[#3F6E64] animate-spin shrink-0" />
+              <RefreshCw className="w-3.5 h-3.5 text-[#0061FE] animate-spin shrink-0" />
             ) : syncState === 'offline' ? (
               <CloudOff className="w-3.5 h-3.5 text-[#8A8478] shrink-0" />
             ) : syncState === 'error' ? (
               <AlertCircle className="w-3.5 h-3.5 text-[#B4553F] shrink-0" />
             ) : (
-              <Cloud className="w-3.5 h-3.5 text-[#3F6E64] shrink-0" />
+              <Cloud className="w-3.5 h-3.5 text-[#0061FE] shrink-0" />
             )}
             <span className="text-[11px] text-[#2B2A28] font-medium truncate">
               {token ? (syncMessage || 'Sincronizado') : 'Solo local (offline)'}
@@ -1092,8 +1092,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {token && (
             <button
               onClick={onTriggerSync}
-              className="text-[#8A8478] hover:text-[#3F6E64] p-1 rounded transition-colors"
-              title="Sincronizar ahora con Drive"
+              className="text-[#8A8478] hover:text-[#0061FE] p-1 rounded transition-colors"
+              title="Sincronizar ahora con Dropbox"
             >
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -1115,12 +1115,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className="w-5 h-5 rounded-full border border-[#E4DECE] shrink-0"
                 />
               ) : (
-                <div className="w-5 h-5 rounded-full bg-[#3F6E64] text-[#F7F4EE] text-[10px] flex items-center justify-center shrink-0">
-                  ✓
+                <div className="w-5 h-5 rounded-full bg-[#0061FE] text-[#F7F4EE] text-[10px] flex items-center justify-center shrink-0">
+                  {userProfile?.name?.charAt(0) || 'D'}
                 </div>
               )}
               <span className="text-[11px] text-[#8A8478] truncate max-w-[100px]">
-                {userProfile?.email || 'Google Drive'}
+                {userProfile?.name || userProfile?.email || 'Dropbox'}
               </span>
             </div>
             <div className="flex items-center gap-1">
@@ -1132,9 +1132,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Settings className="w-3.5 h-3.5" />
               </button>
               <button
-                onClick={onLogoutGoogle}
+                onClick={onLogoutDropbox}
                 className="text-[#8A8478] hover:text-[#B4553F] p-1 transition-colors cursor-pointer"
-                title="Desconectar Google Drive"
+                title="Desconectar Dropbox"
               >
                 <LogOut className="w-3.5 h-3.5" />
               </button>
@@ -1143,11 +1143,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <div className="flex items-center gap-1.5">
             <button
-              onClick={onConnectGoogle}
-              className="flex-1 py-1.5 px-2 bg-[#2B2A28] hover:bg-black text-[#F7F4EE] text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              onClick={onConnectDropbox}
+              className="flex-1 py-1.5 px-2 bg-[#0061FE] hover:bg-[#0052D9] text-[#F7F4EE] text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
             >
               <Cloud className="w-3.5 h-3.5 text-[#F7F4EE]" />
-              <span>Conectar Google Drive</span>
+              <span>Conectar Dropbox</span>
             </button>
             <button
               onClick={onOpenPreferences}

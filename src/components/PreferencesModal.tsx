@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import { getSettings, saveSettings } from '../services/settings';
-import { resetCachedFolderId, SyncState } from '../services/syncEngine';
-import { UserProfile } from '../services/googleAuth';
+import { SyncState } from '../services/syncEngine';
+import {
+  DropboxUserProfile,
+  getDropboxAppKey,
+  setDropboxAppKey,
+  getDropboxRedirectUri,
+} from '../services/dropboxAuth';
 import {
   X,
-  Settings,
-  Folder,
   Cloud,
   RefreshCw,
   LogOut,
@@ -15,19 +18,25 @@ import {
   FileText,
   ExternalLink,
   Check,
-  RotateCcw,
+  Key,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FolderSync,
 } from 'lucide-react';
 
 interface PreferencesModalProps {
   isOpen: boolean;
   onClose: () => void;
   token: string | null;
-  userProfile: UserProfile | null;
+  userProfile: DropboxUserProfile | null;
   syncState: SyncState;
   syncMessage: string;
-  onConnectGoogle: () => void;
-  onLogoutGoogle: () => void;
+  onConnectDropbox: (appKey: string) => Promise<void>;
+  onLogoutDropbox: () => void;
   onTriggerSync: () => void;
+  onSaveManualToken: (token: string) => Promise<void>;
 }
 
 export const PreferencesModal: React.FC<PreferencesModalProps> = ({
@@ -37,13 +46,22 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
   userProfile,
   syncState,
   syncMessage,
-  onConnectGoogle,
-  onLogoutGoogle,
+  onConnectDropbox,
+  onLogoutDropbox,
   onTriggerSync,
+  onSaveManualToken,
 }) => {
-  const [folderName, setFolderName] = useState('');
+  const [appKey, setAppKey] = useState('');
+  const [manualToken, setManualToken] = useState('');
   const [autoSync, setAutoSync] = useState(true);
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [showManualToken, setShowManualToken] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSavingManual, setIsSavingManual] = useState(false);
+  const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const redirectUri = getDropboxRedirectUri();
 
   // Consultar notas pendientes de sincronizar
   const pendingNotes =
@@ -53,44 +71,73 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
         .toArray()
     ) || [];
 
+  const pendingEvents =
+    useLiveQuery(() =>
+      db.events
+        .filter((e) => e.syncStatus === 'pending' || e.syncStatus === 'error')
+        .toArray()
+    ) || [];
+
+  const totalPending = pendingNotes.length + pendingEvents.length;
+
   useEffect(() => {
     if (isOpen) {
       const current = getSettings();
-      setFolderName(current.driveFolderName);
       setAutoSync(current.autoSync);
-      setSavedSuccess(false);
+      const savedKey = getDropboxAppKey();
+      setAppKey(savedKey);
+      setErrorMessage(null);
+      setIsConnecting(false);
+      setIsSavingManual(false);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSaveSettings = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const cleanFolder =
-      folderName.trim().replace(/[/\\:*?"<>|]/g, '_') || 'MiAppNotas';
-    setFolderName(cleanFolder);
-    saveSettings({
-      driveFolderName: cleanFolder,
-      autoSync,
-    });
-    resetCachedFolderId();
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
+  const handleConnect = async () => {
+    const cleanKey = appKey.trim();
+    if (!cleanKey) {
+      setErrorMessage('Por favor introduce tu App Key de Dropbox.');
+      return;
+    }
+    setErrorMessage(null);
+    setIsConnecting(true);
+    setDropboxAppKey(cleanKey);
+    saveSettings({ dropboxAppKey: cleanKey });
 
-    if (token) {
-      onTriggerSync();
+    try {
+      await onConnectDropbox(cleanKey);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Error al conectar con Dropbox');
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  const handleResetFolder = () => {
-    setFolderName('MiAppNotas');
-    saveSettings({ driveFolderName: 'MiAppNotas' });
-    resetCachedFolderId();
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
-    if (token) {
-      onTriggerSync();
+  const handleSaveToken = async () => {
+    const cleanToken = manualToken.trim();
+    if (!cleanToken) {
+      setErrorMessage('Por favor introduce el token de acceso.');
+      return;
     }
+    setErrorMessage(null);
+    setIsSavingManual(true);
+    try {
+      await onSaveManualToken(cleanToken);
+      setManualToken('');
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Token de acceso no válido o caducado');
+    } finally {
+      setIsSavingManual(false);
+    }
+  };
+
+  const handleCopyRedirectUri = () => {
+    navigator.clipboard.writeText(redirectUri);
+    setCopiedRedirect(true);
+    setTimeout(() => setCopiedRedirect(false), 2500);
   };
 
   const handleToggleAutoSync = () => {
@@ -108,15 +155,15 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
         {/* Header */}
         <div className="p-4 border-b border-[#E4DECE] bg-[#EDEAE2] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#3F6E64] text-white flex items-center justify-center shadow-xs">
-              <Settings className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-xl bg-[#0061FE] text-white flex items-center justify-center shadow-xs">
+              <Cloud className="w-4 h-4" />
             </div>
             <div>
               <h2 className="font-bold text-sm text-[#2B2A28] leading-tight">
-                Preferencias y Google Drive
+                Sincronización con Dropbox
               </h2>
               <p className="text-[11px] text-[#8A8478]">
-                Configuración de almacenamiento y sincronización
+                Almacenamiento privado multidispositivo (PC, móvil y web)
               </p>
             </div>
           </div>
@@ -131,11 +178,20 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
 
         {/* Content */}
         <div className="p-5 overflow-y-auto space-y-5 text-[#2B2A28]">
-          {/* 1. Estado de Google Drive */}
+          {/* Mensaje de error general si ocurre */}
+          {errorMessage && (
+            <div className="bg-[#B4553F]/10 border border-[#B4553F]/20 text-[#B4553F] p-3 rounded-xl text-xs flex items-start gap-2">
+              <span className="font-bold">⚠️</span>
+              <div className="flex-1">{errorMessage}</div>
+            </div>
+          )}
+
+          {/* 1. Estado de la cuenta de Dropbox */}
           <div className="bg-white p-4 rounded-xl border border-[#E4DECE] shadow-xs space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#8A8478]">
-                Cuenta de Google Drive
+              <span className="text-xs font-bold uppercase tracking-wider text-[#8A8478] flex items-center gap-1.5">
+                <FolderSync className="w-3.5 h-3.5 text-[#0061FE]" />
+                Cuenta de Dropbox
               </span>
               {token ? (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#3F6E64]/10 text-[#3F6E64]">
@@ -151,135 +207,191 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
             </div>
 
             {token ? (
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex items-center gap-3 min-w-0">
-                  {userProfile?.picture ? (
-                    <img
-                      src={userProfile.picture}
-                      alt="Avatar"
-                      className="w-10 h-10 rounded-full border border-[#E4DECE] shrink-0"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-[#3F6E64] text-white flex items-center justify-center font-bold text-sm shrink-0">
-                      {userProfile?.name?.charAt(0) || 'G'}
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {userProfile?.picture ? (
+                      <img
+                        src={userProfile.picture}
+                        alt="Avatar"
+                        className="w-10 h-10 rounded-full border border-[#E4DECE] shrink-0"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-[#0061FE] text-white flex items-center justify-center font-bold text-sm shrink-0">
+                        {userProfile?.name?.charAt(0) || 'D'}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-[#2B2A28] truncate">
+                        {userProfile?.name || 'Usuario Dropbox'}
+                      </p>
+                      <p className="text-[11px] text-[#8A8478] truncate">
+                        {userProfile?.email || 'Sesión activa'}
+                      </p>
                     </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-[#2B2A28] truncate">
-                      {userProfile?.name || 'Usuario Google'}
-                    </p>
-                    <p className="text-[11px] text-[#8A8478] truncate">
-                      {userProfile?.email || 'Sesión activa'}
-                    </p>
                   </div>
+
+                  <button
+                    onClick={onLogoutDropbox}
+                    className="px-2.5 py-1.5 text-xs text-[#B4553F] hover:bg-[#B4553F]/10 rounded-lg transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Desconectar</span>
+                  </button>
                 </div>
 
-                <button
-                  onClick={onLogoutGoogle}
-                  className="px-2.5 py-1.5 text-xs text-[#B4553F] hover:bg-[#B4553F]/10 rounded-lg transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Desconectar</span>
-                </button>
+                <div className="text-[11px] leading-relaxed bg-[#3F6E64]/10 text-[#3F6E64] p-2.5 rounded-lg font-medium flex items-center gap-2">
+                  <span>✓</span>
+                  <span>
+                    Tus notas se sincronizan automáticamente en tu Dropbox privado en la carpeta <code>/Apps/Bitácora</code>.
+                  </span>
+                </div>
               </div>
             ) : (
-              <div className="space-y-2 pt-1">
-                <p className="text-xs text-[#8A8478]">
-                  Conecta tu cuenta para sincronizar tus notas directamente con tu propio Google Drive. No usamos servidores externos ni intermediarios.
+              <div className="space-y-3 pt-1">
+                <p className="text-xs text-[#8A8478] leading-relaxed">
+                  Conecta tu cuenta para sincronizar tus notas de forma segura en tu propio Dropbox. 100% privado y gratuito.
                 </p>
-                <button
-                  onClick={onConnectGoogle}
-                  className="w-full py-2 px-3 bg-[#2B2A28] hover:bg-black text-[#F7F4EE] text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs"
-                >
-                  <Cloud className="w-4 h-4 text-[#F7F4EE]" />
-                  <span>Conectar con Google Drive</span>
-                </button>
-              </div>
-            )}
 
-            {token && (
-              <div className="text-[11px] leading-relaxed">
-                {localStorage.getItem('app_notas_refresh_token') ? (
-                  <p className="text-[#3F6E64] bg-[#3F6E64]/10 p-2.5 rounded-lg font-medium">
-                    ✓ Conexión permanente activa: la app renovará el acceso en segundo plano automáticamente y nunca se desconectará en iPhone ni Safari.
-                  </p>
-                ) : (
-                  <div className="bg-[#C98A3D]/10 p-2.5 rounded-lg text-[#2B2A28] space-y-1.5">
-                    <p className="font-medium text-[#C98A3D]">
-                      ⚠️ Sesión temporal de 1 hora detectada
-                    </p>
-                    <p className="text-[#8A8478]">
-                      Para activar la conexión permanente sin desconexiones en iPhone, pulsa en reconectar una sola vez:
-                    </p>
+                {/* Input App Key */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-[#2B2A28] flex items-center justify-between">
+                    <span>App Key de Dropbox:</span>
                     <button
                       type="button"
-                      onClick={onConnectGoogle}
-                      className="px-2.5 py-1 bg-[#2B2A28] hover:bg-black text-white rounded text-[11px] font-semibold cursor-pointer"
+                      onClick={() => setShowGuide(!showGuide)}
+                      className="text-[#0061FE] hover:underline flex items-center gap-1 font-normal cursor-pointer text-[11px]"
                     >
-                      Activar conexión permanente
+                      <HelpCircle className="w-3 h-3" />
+                      <span>{showGuide ? 'Ocultar guía' : '¿Cómo conseguirla gratis en 2 min?'}</span>
                     </button>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-[#8A8478]">
+                      <Key className="w-3.5 h-3.5" />
+                    </span>
+                    <input
+                      type="text"
+                      value={appKey}
+                      onChange={(e) => setAppKey(e.target.value)}
+                      placeholder="Ejemplo: abc123def456ghi"
+                      className="w-full text-xs pl-8 pr-3 py-2 bg-[#F7F4EE] border border-[#E4DECE] rounded-lg outline-none focus:border-[#0061FE] font-mono text-[#2B2A28]"
+                    />
+                  </div>
+                </div>
+
+                {/* Guía desplegable paso a paso */}
+                {showGuide && (
+                  <div className="bg-[#EDEAE2]/80 border border-[#E4DECE] rounded-xl p-3 text-xs space-y-2.5 animate-in fade-in">
+                    <div className="font-semibold text-[#2B2A28] text-[11px] flex items-center justify-between">
+                      <span>Pasos en la consola de Dropbox (gratis y en 2 minutos):</span>
+                      <a
+                        href="https://www.dropbox.com/developers/apps"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#0061FE] flex items-center gap-1 hover:underline"
+                      >
+                        <span>Abrir consola</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-[#2B2A28]">
+                      <li>
+                        Inicia sesión en <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener noreferrer" className="text-[#0061FE] underline">dropbox.com/developers/apps</a> y pulsa <b>Create app</b>.
+                      </li>
+                      <li>
+                        Selecciona <b>Scoped access</b> y luego <b>App folder</b> (así Bitácora solo accederá a su propia carpeta). Ponle un nombre (ej: <code>Bitacora-Notas</code>).
+                      </li>
+                      <li>
+                        En la pestaña <b>Permissions</b>, marca las casillas:
+                        <div className="mt-1 ml-4 space-y-0.5 font-mono text-[10px] text-[#3F6E64]">
+                          <div>• files.content.write</div>
+                          <div>• files.content.read</div>
+                          <div>• account_info.read</div>
+                        </div>
+                      </li>
+                      <li>
+                        En la pestaña <b>Settings</b>, bajo <i>OAuth 2 Redirect URIs</i>, añade esta URL exacta:
+                        <div className="mt-1 flex items-center gap-1.5 bg-white p-1.5 rounded border border-[#E4DECE]">
+                          <code className="text-[10px] text-[#2B2A28] break-all flex-1 font-mono">{redirectUri}</code>
+                          <button
+                            type="button"
+                            onClick={handleCopyRedirectUri}
+                            className="px-2 py-0.5 bg-[#EDEAE2] hover:bg-[#E4DECE] text-[10px] rounded flex items-center gap-1 text-[#2B2A28] font-sans font-medium cursor-pointer"
+                          >
+                            {copiedRedirect ? <Check className="w-3 h-3 text-[#3F6E64]" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedRedirect ? 'Copiada' : 'Copiar'}</span>
+                          </button>
+                        </div>
+                      </li>
+                      <li>
+                        Copia la <b>App key</b> que aparece en esa misma pestaña <i>Settings</i> y pégala arriba.
+                      </li>
+                    </ol>
                   </div>
                 )}
+
+                {/* Botón conectar con Dropbox */}
+                <button
+                  type="button"
+                  onClick={handleConnect}
+                  disabled={isConnecting}
+                  className="w-full py-2.5 px-3 bg-[#0061FE] hover:bg-[#0052D9] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  {isConnecting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Conectando con Dropbox...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-4 h-4 text-white" />
+                      <span>Conectar con Dropbox</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Alternativa: Token manual */}
+                <div className="pt-1 border-t border-[#E4DECE]/70">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualToken(!showManualToken)}
+                    className="w-full text-left text-[11px] text-[#8A8478] hover:text-[#2B2A28] flex items-center justify-between cursor-pointer py-1"
+                  >
+                    <span>¿Prefieres pegar un Token de Acceso directo generado en la consola?</span>
+                    {showManualToken ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {showManualToken && (
+                    <div className="mt-2 space-y-2 bg-[#EDEAE2]/50 p-3 rounded-xl border border-[#E4DECE] animate-in fade-in">
+                      <p className="text-[11px] text-[#8A8478]">
+                        En la pestaña <i>Settings</i> de tu app de Dropbox puedes pulsar el botón <b>&quot;Generate access token&quot;</b> y pegarlo aquí para conectar directamente:
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={manualToken}
+                          onChange={(e) => setManualToken(e.target.value)}
+                          placeholder="sl.B..."
+                          className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-[#E4DECE] rounded-lg outline-none font-mono text-[#2B2A28]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveToken}
+                          disabled={isSavingManual}
+                          className="px-3 py-1.5 bg-[#2B2A28] hover:bg-black text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
+                        >
+                          {isSavingManual ? 'Verificando...' : 'Guardar'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
 
-          {/* 2. Carpeta de Google Drive */}
-          <div className="bg-white p-4 rounded-xl border border-[#E4DECE] shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#8A8478] flex items-center gap-1.5">
-                <Folder className="w-3.5 h-3.5 text-[#3F6E64]" />
-                Carpeta en tu Google Drive
-              </span>
-            </div>
-
-            <p className="text-xs text-[#8A8478]">
-              Elige el nombre de la carpeta raíz en tu Google Drive donde se almacenarán las notas (dentro se creará la subcarpeta <code className="bg-[#EDEAE2] px-1 py-0.5 rounded text-[#2B2A28]">/notes/</code>):
-            </p>
-
-            <form onSubmit={handleSaveSettings} className="space-y-2">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-[#8A8478] text-xs">
-                    📁
-                  </span>
-                  <input
-                    type="text"
-                    value={folderName}
-                    onChange={(e) => setFolderName(e.target.value)}
-                    placeholder="MiAppNotas"
-                    className="w-full text-xs pl-8 pr-3 py-2 bg-[#F7F4EE] border border-[#E4DECE] rounded-lg outline-none focus:border-[#3F6E64] font-medium text-[#2B2A28]"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="px-3 py-2 bg-[#3F6E64] hover:bg-[#345951] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs shrink-0"
-                >
-                  Guardar
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <button
-                  type="button"
-                  onClick={handleResetFolder}
-                  className="text-[11px] text-[#8A8478] hover:text-[#2B2A28] flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Restablecer a &quot;MiAppNotas&quot;</span>
-                </button>
-
-                {savedSuccess && (
-                  <span className="text-[11px] font-semibold text-[#3F6E64] flex items-center gap-1 animate-in fade-in">
-                    <Check className="w-3 h-3" />
-                    ¡Guardado!
-                  </span>
-                )}
-              </div>
-            </form>
-          </div>
-
-          {/* 3. Sincronización y Estado */}
+          {/* 2. Control de sincronización */}
           <div className="bg-white p-4 rounded-xl border border-[#E4DECE] shadow-xs space-y-3">
             <span className="text-xs font-bold uppercase tracking-wider text-[#8A8478]">
               Control de sincronización
@@ -290,14 +402,14 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
               <div>
                 <p className="text-xs font-semibold text-[#2B2A28]">Guardar automáticamente al editar</p>
                 <p className="text-[11px] text-[#8A8478]">
-                  Sube los cambios a Drive 1,5 segundos tras dejar de teclear
+                  Sube los cambios a Dropbox 1,5 segundos tras dejar de teclear
                 </p>
               </div>
               <button
                 type="button"
                 onClick={handleToggleAutoSync}
                 className={`w-10 h-6 rounded-full transition-colors p-0.5 cursor-pointer relative ${
-                  autoSync ? 'bg-[#3F6E64]' : 'bg-[#E4DECE]'
+                  autoSync ? 'bg-[#0061FE]' : 'bg-[#E4DECE]'
                 }`}
               >
                 <div
@@ -311,11 +423,11 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
             {/* Sync now action */}
             <div className="pt-2 border-t border-[#E4DECE]/60 flex items-center justify-between">
               <div className="text-xs">
-                <span className="text-[#8A8478]">Estado actual: </span>
+                <span className="text-[#8A8478]">Estado: </span>
                 <span className="font-semibold text-[#2B2A28]">{syncMessage || 'Al día'}</span>
-                {pendingNotes.length > 0 && (
+                {totalPending > 0 && (
                   <span className="text-[#C98A3D] font-medium ml-1">
-                    ({pendingNotes.length} pendiente{pendingNotes.length > 1 ? 's' : ''})
+                    ({totalPending} cambio{totalPending > 1 ? 's' : ''} pendiente{totalPending > 1 ? 's' : ''})
                   </span>
                 )}
               </div>
@@ -329,7 +441,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                 >
                   <RefreshCw
                     className={`w-3.5 h-3.5 ${
-                      syncState === 'syncing' ? 'animate-spin text-[#3F6E64]' : ''
+                      syncState === 'syncing' ? 'animate-spin text-[#0061FE]' : ''
                     }`}
                   />
                   <span>Sincronizar ahora</span>
@@ -338,7 +450,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
             </div>
           </div>
 
-          {/* 4. Enlaces legales */}
+          {/* 3. Enlaces legales */}
           <div className="flex items-center justify-between px-2 text-[11px] text-[#8A8478]">
             <a
               href="/privacidad.html"

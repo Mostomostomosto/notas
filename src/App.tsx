@@ -9,15 +9,14 @@ import { CalendarDetail } from './components/CalendarDetail';
 import { EventModal } from './components/EventModal';
 import { getTodayISO } from './utils/calendarUtils';
 import {
-  initGoogleAuth,
-  requestLogin,
-  logout,
-  getSavedSession,
-  waitForGoogleScript,
-  getValidAccessToken,
-  subscribeTokenUpdates,
-  UserProfile,
-} from './services/googleAuth';
+  getDropboxAuthState,
+  subscribeDropboxTokenUpdates,
+  getValidDropboxAccessToken,
+  logoutDropbox,
+  startDropboxLoginPopup,
+  setManualDropboxToken,
+  DropboxUserProfile,
+} from './services/dropboxAuth';
 import {
   subscribeSyncState,
   runFullSync,
@@ -43,9 +42,9 @@ export const App: React.FC = () => {
   const [lastDeletedNote, setLastDeletedNote] = useState<Note | null>(null);
   const [deleteToastTimeout, setDeleteToastTimeout] = useState<number | null>(null);
 
-  // Estados de autenticación y sincronización con Google Drive
+  // Estados de autenticación y sincronización con Dropbox
   const [token, setToken] = useState<string | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<DropboxUserProfile | null>(null);
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('Sincronizado');
 
@@ -54,7 +53,7 @@ export const App: React.FC = () => {
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const events = useLiveQuery(() => db.events.filter((e) => !e.deleted).toArray()) || [];
 
-  // Inicializar base de datos y Google Identity al montar
+  // Inicializar base de datos y autenticación de Dropbox al montar
   useEffect(() => {
     let isMounted = true;
 
@@ -68,46 +67,24 @@ export const App: React.FC = () => {
       if (message) setSyncMessage(message);
     });
 
-    // Suscribirse a actualizaciones de token de acceso
-    const unsubscribeToken = subscribeTokenUpdates((newToken) => {
+    // Suscribirse a actualizaciones de token de Dropbox
+    const unsubscribeToken = subscribeDropboxTokenUpdates((newToken) => {
       if (!isMounted) return;
       setToken(newToken);
     });
 
-    // Restaurar sesión de Google si existe
-    const session = getSavedSession();
-    if (session) {
-      if (session.profile) setUserProfile(session.profile);
-      if (session.token) {
-        setToken(session.token);
-        runFullSync(session.token);
-      } else if (session.hasRefreshToken) {
-        // Renovar silenciosamente en segundo plano
-        getValidAccessToken().then((validToken) => {
-          if (!isMounted) return;
-          if (validToken) {
-            setToken(validToken);
-            runFullSync(validToken);
-          }
-        });
-      }
+    // Restaurar sesión de Dropbox si existe
+    const authState = getDropboxAuthState();
+    if (authState.isLoggedIn && authState.token) {
+      setToken(authState.token);
+      if (authState.user) setUserProfile(authState.user);
+
+      getValidDropboxAccessToken().then((validToken) => {
+        if (!isMounted || !validToken) return;
+        setToken(validToken);
+        runFullSync(validToken);
+      });
     }
-
-    // Inicializar cliente de Google
-    waitForGoogleScript().then((ready) => {
-      if (!ready || !isMounted) return;
-
-      initGoogleAuth(
-        (newToken, profile) => {
-          setToken(newToken);
-          if (profile) setUserProfile(profile);
-          runFullSync(newToken);
-        },
-        (err) => {
-          console.error('Error al iniciar sesión con Google:', err);
-        }
-      );
-    });
 
     return () => {
       isMounted = false;
@@ -141,17 +118,23 @@ export const App: React.FC = () => {
     }
   }, [isDesktop, notes, tags]);
 
-  // Manejadores de autenticación
-  const handleConnectGoogle = () => {
-    try {
-      requestLogin(true);
-    } catch (e) {
-      console.error(e);
-    }
+  // Manejadores de autenticación Dropbox
+  const handleConnectDropbox = async (appKey: string) => {
+    const res = await startDropboxLoginPopup(appKey);
+    setToken(res.token);
+    if (res.profile) setUserProfile(res.profile);
+    await runFullSync(res.token);
   };
 
-  const handleLogoutGoogle = () => {
-    logout(() => {
+  const handleSaveManualToken = async (manualToken: string) => {
+    const profile = await setManualDropboxToken(manualToken);
+    setToken(manualToken);
+    if (profile) setUserProfile(profile);
+    await runFullSync(manualToken);
+  };
+
+  const handleLogoutDropbox = () => {
+    logoutDropbox(() => {
       setToken(null);
       setUserProfile(null);
     });
@@ -340,8 +323,8 @@ export const App: React.FC = () => {
           syncMessage={syncMessage}
           onTriggerSync={handleTriggerSync}
           userProfile={userProfile}
-          onConnectGoogle={handleConnectGoogle}
-          onLogoutGoogle={handleLogoutGoogle}
+          onConnectDropbox={() => setIsPreferencesOpen(true)}
+          onLogoutDropbox={handleLogoutDropbox}
           token={token}
           onOpenPreferences={() => setIsPreferencesOpen(true)}
         />
@@ -499,7 +482,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Preferencias y Google Drive */}
+      {/* Modal de Preferencias y Dropbox */}
       <PreferencesModal
         isOpen={isPreferencesOpen}
         onClose={() => setIsPreferencesOpen(false)}
@@ -507,9 +490,10 @@ export const App: React.FC = () => {
         userProfile={userProfile}
         syncState={syncState}
         syncMessage={syncMessage}
-        onConnectGoogle={handleConnectGoogle}
-        onLogoutGoogle={handleLogoutGoogle}
+        onConnectDropbox={handleConnectDropbox}
+        onLogoutDropbox={handleLogoutDropbox}
         onTriggerSync={handleTriggerSync}
+        onSaveManualToken={handleSaveManualToken}
       />
     </div>
   );

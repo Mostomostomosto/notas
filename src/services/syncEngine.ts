@@ -1,12 +1,14 @@
 import { db, Note, AppEvent } from '../db/db';
 import {
-  findOrCreateFolder,
-  uploadJsonFile,
-  listFilesInFolder,
-  readJsonFile,
-} from './googleDrive';
+  dropboxUploadJson,
+  dropboxDownloadJson,
+  dropboxListFolder,
+} from './dropboxApi';
 import { getSettings } from './settings';
-import { getValidAccessToken, refreshAccessToken } from './googleAuth';
+import {
+  getValidDropboxAccessToken,
+  refreshDropboxAccessToken,
+} from './dropboxAuth';
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 
@@ -15,14 +17,10 @@ type SyncListener = (state: SyncState, message?: string) => void;
 let currentState: SyncState = 'idle';
 let currentMessage = '';
 const listeners = new Set<SyncListener>();
-
-let cachedNotesFolderId: string | null = null;
-let cachedEventsFolderId: string | null = null;
 let syncTimeout: number | null = null;
 
 export function resetCachedFolderId(): void {
-  cachedNotesFolderId = null;
-  cachedEventsFolderId = null;
+  // En Dropbox no necesitamos IDs abstractos de carpetas, usamos rutas estables
 }
 
 export function subscribeSyncState(listener: SyncListener): () => void {
@@ -40,33 +38,18 @@ function notifyState(state: SyncState, message = '') {
 }
 
 /**
- * Obtiene o crea la carpeta /[driveFolderName]/notes/ en Drive
+ * Obtiene el prefijo de ruta para Dropbox según la configuración
  */
-async function getNotesFolderId(token: string): Promise<string> {
-  if (cachedNotesFolderId) return cachedNotesFolderId;
+function getNotesPath(): string {
+  return '/notes';
+}
 
-  const folderName = getSettings().driveFolderName || 'MiAppNotas';
-  const root = await findOrCreateFolder(token, folderName);
-  const notes = await findOrCreateFolder(token, 'notes', root.id);
-  cachedNotesFolderId = notes.id;
-  return notes.id;
+function getEventsPath(): string {
+  return '/events';
 }
 
 /**
- * Obtiene o crea la carpeta /[driveFolderName]/events/ en Drive
- */
-async function getEventsFolderId(token: string): Promise<string> {
-  if (cachedEventsFolderId) return cachedEventsFolderId;
-
-  const folderName = getSettings().driveFolderName || 'MiAppNotas';
-  const root = await findOrCreateFolder(token, folderName);
-  const events = await findOrCreateFolder(token, 'events', root.id);
-  cachedEventsFolderId = events.id;
-  return events.id;
-}
-
-/**
- * Sube a Google Drive todas las notas con syncStatus === 'pending'
+ * Sube a Dropbox todas las notas y eventos con syncStatus === 'pending' o 'error'
  */
 export async function syncPendingNotes(providedToken?: string | null): Promise<void> {
   if (!navigator.onLine) {
@@ -74,7 +57,7 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
     return;
   }
 
-  let token = providedToken || (await getValidAccessToken());
+  let token = providedToken || (await getValidDropboxAccessToken());
   if (!token) {
     return;
   }
@@ -93,12 +76,12 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
     return;
   }
 
-  notifyState('syncing', `Guardando ${totalPending} cambio(s)...`);
+  notifyState('syncing', `Guardando ${totalPending} cambio(s) en Dropbox...`);
 
   const executeUpload = async (activeToken: string) => {
     // 1. Subir notas pendientes
     if (pendingNotes.length > 0) {
-      const folderId = await getNotesFolderId(activeToken);
+      const notesFolder = getNotesPath();
 
       for (const note of pendingNotes) {
         await db.notes.update(note.id, { syncStatus: 'syncing' });
@@ -111,39 +94,13 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
           deleted: note.deleted,
           createdAt: note.createdAt,
           updatedAt: note.updatedAt,
-          blocks: note.blocks.map((b) => {
-            if (b.type === 'heading') return { type: 'heading', content: b.content };
-            if (b.type === 'text') return { type: 'text', content: b.content };
-            if (b.type === 'checklist') {
-              return {
-                type: 'checklist',
-                items: b.items.map((i) => ({ text: i.text, checked: i.checked })),
-              };
-            }
-            if (b.type === 'image') {
-              return { type: 'image', driveFileId: b.driveFileId, caption: b.caption || '' };
-            }
-            if (b.type === 'columns') {
-              return {
-                type: 'columns',
-                labels: b.labels || [],
-                rows: b.rows || [],
-              };
-            }
-            return b;
-          }),
+          blocks: note.blocks,
         };
 
-        const result = await uploadJsonFile(
-          activeToken,
-          `${note.id}.json`,
-          payload,
-          folderId,
-          note.driveFileId
-        );
+        const filePath = `${notesFolder}/${note.id}.json`;
+        await dropboxUploadJson(activeToken, filePath, payload);
 
         await db.notes.update(note.id, {
-          driveFileId: result.id,
           syncStatus: 'synced',
         });
       }
@@ -151,7 +108,7 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
 
     // 2. Subir eventos pendientes
     if (pendingEvents.length > 0) {
-      const eventsFolderId = await getEventsFolderId(activeToken);
+      const eventsFolder = getEventsPath();
 
       for (const event of pendingEvents) {
         await db.events.update(event.id, { syncStatus: 'syncing' });
@@ -168,16 +125,10 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
           deleted: event.deleted ?? false,
         };
 
-        const result = await uploadJsonFile(
-          activeToken,
-          `${event.id}.json`,
-          payload,
-          eventsFolderId,
-          event.driveFileId
-        );
+        const filePath = `${eventsFolder}/${event.id}.json`;
+        await dropboxUploadJson(activeToken, filePath, payload);
 
         await db.events.update(event.id, {
-          driveFileId: result.id,
           syncStatus: 'synced',
         });
       }
@@ -188,47 +139,46 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
     await executeUpload(token);
     notifyState('idle', 'Sincronizado');
   } catch (err: unknown) {
-    console.error('Error al sincronizar datos pendientes:', err);
+    console.error('Error al sincronizar datos pendientes con Dropbox:', err);
     const errStr = String(err);
 
-    // Si el error es 401 (token expirado), renovamos y reintentamos de inmediato
-    if (errStr.includes('401')) {
-      const newToken = await refreshAccessToken();
+    // Si el error es 401 o token expirado, intentamos renovar
+    if (errStr.includes('401') || errStr.includes('expired_access_token') || errStr.includes('invalid_access_token')) {
+      const newToken = await refreshDropboxAccessToken();
       if (newToken) {
         try {
-          resetCachedFolderId();
           await executeUpload(newToken);
           notifyState('idle', 'Sincronizado');
           return;
         } catch (retryErr) {
-          console.error('Fallo en reintento con token renovado:', retryErr);
+          console.error('Fallo en reintento Dropbox tras renovar token:', retryErr);
         }
       }
     }
 
-    notifyState('error', 'Error al sincronizar con Google Drive');
+    notifyState('error', 'Error al sincronizar con Dropbox');
   }
 }
 
 /**
- * Descarga notas y eventos remotos desde Drive y los reconcilia con la base de datos local
+ * Descarga notas y eventos remotos desde Dropbox y los reconcilia con la base de datos local
  */
 export async function pullRemoteNotes(providedToken?: string | null): Promise<void> {
   if (!navigator.onLine) return;
 
-  let token = providedToken || (await getValidAccessToken());
+  let token = providedToken || (await getValidDropboxAccessToken());
   if (!token) return;
 
   const executePull = async (activeToken: string) => {
     // 1. Descargar notas remotas
-    const folderId = await getNotesFolderId(activeToken);
-    const remoteFiles = await listFilesInFolder(activeToken, folderId);
-
+    const notesFolder = getNotesPath();
+    const remoteFiles = await dropboxListFolder(activeToken, notesFolder);
     const jsonFiles = remoteFiles.filter((f) => f.name.endsWith('.json'));
 
     for (const file of jsonFiles) {
       try {
-        const remoteNote = await readJsonFile<Note>(activeToken, file.id);
+        const filePath = file.path_display || file.path_lower || `${notesFolder}/${file.name}`;
+        const remoteNote = await dropboxDownloadJson<Note>(activeToken, filePath);
         if (!remoteNote || !remoteNote.id) continue;
 
         const localNote = await db.notes.get(remoteNote.id);
@@ -236,35 +186,35 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
         if (!localNote) {
           await db.notes.put({
             ...remoteNote,
-            driveFileId: file.id,
             syncStatus: 'synced',
           });
         } else {
           const remoteTime = new Date(remoteNote.updatedAt).getTime();
           const localTime = new Date(localNote.updatedAt).getTime();
 
+          // Si el archivo remoto es más reciente y no tenemos cambios pendientes locales
           if (remoteTime > localTime && localNote.syncStatus !== 'pending') {
             await db.notes.put({
               ...remoteNote,
-              driveFileId: file.id,
               syncStatus: 'synced',
             });
           }
         }
       } catch (e) {
-        console.warn(`No se pudo procesar archivo remoto ${file.name}:`, e);
+        console.warn(`No se pudo procesar nota remota ${file.name}:`, e);
       }
     }
 
     // 2. Descargar eventos remotos
     try {
-      const eventsFolderId = await getEventsFolderId(activeToken);
-      const remoteEventFiles = await listFilesInFolder(activeToken, eventsFolderId);
+      const eventsFolder = getEventsPath();
+      const remoteEventFiles = await dropboxListFolder(activeToken, eventsFolder);
       const jsonEventFiles = remoteEventFiles.filter((f) => f.name.endsWith('.json'));
 
       for (const file of jsonEventFiles) {
         try {
-          const remoteEvent = await readJsonFile<AppEvent>(activeToken, file.id);
+          const filePath = file.path_display || file.path_lower || `${eventsFolder}/${file.name}`;
+          const remoteEvent = await dropboxDownloadJson<AppEvent>(activeToken, filePath);
           if (!remoteEvent || !remoteEvent.id) continue;
 
           const localEvent = await db.events.get(remoteEvent.id);
@@ -272,7 +222,6 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
           if (!localEvent) {
             await db.events.put({
               ...remoteEvent,
-              driveFileId: file.id,
               syncStatus: 'synced',
             });
           } else {
@@ -282,7 +231,6 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
             if (remoteTime > localTime && localEvent.syncStatus !== 'pending') {
               await db.events.put({
                 ...remoteEvent,
-                driveFileId: file.id,
                 syncStatus: 'synced',
               });
             }
@@ -292,41 +240,40 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
         }
       }
     } catch (e) {
-      console.warn('Error al reconciliar carpeta de eventos remota:', e);
+      console.warn('Error al reconciliar eventos remotos de Dropbox:', e);
     }
   };
 
   try {
-    notifyState('syncing', 'Buscando cambios en Drive...');
+    notifyState('syncing', 'Buscando cambios en Dropbox...');
     await executePull(token);
     notifyState('idle', 'Sincronizado');
   } catch (err: unknown) {
-    console.error('Error al descargar notas remotas:', err);
+    console.error('Error al descargar datos de Dropbox:', err);
     const errStr = String(err);
 
-    if (errStr.includes('401')) {
-      const newToken = await refreshAccessToken();
+    if (errStr.includes('401') || errStr.includes('expired_access_token') || errStr.includes('invalid_access_token')) {
+      const newToken = await refreshDropboxAccessToken();
       if (newToken) {
         try {
-          resetCachedFolderId();
           await executePull(newToken);
           notifyState('idle', 'Sincronizado');
           return;
         } catch (retryErr) {
-          console.error('Fallo en reintento pull tras renovar:', retryErr);
+          console.error('Fallo en reintento pull de Dropbox:', retryErr);
         }
       }
     }
 
-    notifyState('error', 'Error al consultar Drive');
+    notifyState('error', 'Error al consultar Dropbox');
   }
 }
 
 /**
- * Ejecuta una sincronización completa (subida de cambios y descarga de novedades)
+ * Ejecuta una sincronización completa (subida de cambios pendientes y descarga de novedades)
  */
 export async function runFullSync(token?: string | null): Promise<void> {
-  const activeToken = token || (await getValidAccessToken());
+  const activeToken = token || (await getValidDropboxAccessToken());
   if (!activeToken) return;
   await syncPendingNotes(activeToken);
   await pullRemoteNotes(activeToken);
@@ -335,7 +282,7 @@ export async function runFullSync(token?: string | null): Promise<void> {
 /**
  * Planifica una sincronización con debounce de 1500ms tras una edición
  */
-export function scheduleSync(token: string | null): void {
+export function scheduleSync(token?: string | null): void {
   if (!getSettings().autoSync) return;
 
   if (syncTimeout) {
@@ -345,9 +292,9 @@ export function scheduleSync(token: string | null): void {
   notifyState('idle', 'Cambios pendientes...');
 
   syncTimeout = window.setTimeout(async () => {
-    const activeToken = token || (await getValidAccessToken());
+    const activeToken = token || (await getValidDropboxAccessToken());
     if (activeToken) {
-      syncPendingNotes(activeToken);
+      await syncPendingNotes(activeToken);
     }
   }, 1500);
 }

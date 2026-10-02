@@ -1535,7 +1535,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           </span>
           {localNote.syncStatus === 'synced' && (
             <span className="text-[#3F6E64] flex items-center gap-1">
-              <Check className="w-3 h-3" /> Guardada en Drive
+              <Check className="w-3 h-3" /> Guardada en Dropbox
             </span>
           )}
         </div>

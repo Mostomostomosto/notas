@@ -209,6 +209,23 @@ function createWindow() {
 
   // Handle popups & external links
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Allow Dropbox OAuth popup
+    if (url.includes('dropbox.com')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 560,
+          height: 680,
+          autoHideMenuBar: true,
+          title: 'Conectar con Dropbox',
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+          },
+        },
+      };
+    }
+
     // Allow Google OAuth popup
     if (url.startsWith('https://accounts.google.com')) {
       return {
