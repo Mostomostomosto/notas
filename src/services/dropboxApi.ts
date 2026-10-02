@@ -169,8 +169,12 @@ export async function dropboxListFolder(
     });
 
     if (!res.ok) {
-      const errJson = await res.json().catch(() => null);
-      const errorSummary = errJson?.error_summary || '';
+      const errorText = await res.text();
+      let errJson: any = null;
+      try {
+        errJson = JSON.parse(errorText);
+      } catch {}
+      const errorSummary = errJson?.error_summary || errorText || '';
       const tag = errJson?.error?.['.tag'] || '';
 
       // Si la carpeta no existe todavía (path/not_found o 409), la consideramos vacía
@@ -183,14 +187,23 @@ export async function dropboxListFolder(
         return [];
       }
 
-      if (tag === 'missing_scope' || errorSummary.includes('missing_scope')) {
+      if (
+        tag === 'missing_scope' ||
+        errorSummary.includes('missing_scope') ||
+        errorText.includes('files.metadata.read') ||
+        errorText.includes('not permitted to access this endpoint')
+      ) {
         const requiredScope = errJson?.error?.required_scope || 'files.metadata.read';
         throw new Error(
-          `Falta el permiso "${requiredScope}" en tu App de Dropbox. Actívalo en Permissions, pulsa Submit y genera un nuevo token.`
+          `Falta el permiso "${requiredScope}" en tu App de Dropbox. Recuerda que al marcar casillas en la pestaña Permissions debes pulsar el botón azul "Submit" al final de la página y luego generar un nuevo token.`
         );
       }
 
-      throw new Error(`Error al listar carpeta ${normalizedPath} (${res.status}): ${JSON.stringify(errJson)}`);
+      if (tag === 'invalid_access_token' || errorSummary.includes('invalid_access_token') || errorText.includes('invalid_access_token')) {
+        throw new Error('El token de Dropbox es inválido o ha caducado. Vuelve a conectar o genera un nuevo token.');
+      }
+
+      throw new Error(`Error al listar carpeta ${normalizedPath} (${res.status}): ${errorSummary}`);
     }
 
     let data: DropboxListFolderResult = await res.json();
@@ -255,10 +268,16 @@ export interface DropboxPermissionsTestResult {
     contentWrite: boolean;
     contentRead: boolean;
   };
+  errors?: {
+    account?: string;
+    metadata?: string;
+    write?: string;
+    read?: string;
+  };
 }
 
 /**
- * Realiza un test exhaustivo de la conexión y de los permisos clave de Dropbox
+ * Realiza un test exhaustivo e independiente de la conexión y de los permisos clave de Dropbox
  */
 export async function dropboxTestPermissions(token: string): Promise<DropboxPermissionsTestResult> {
   const result: DropboxPermissionsTestResult = {
@@ -270,6 +289,7 @@ export async function dropboxTestPermissions(token: string): Promise<DropboxPerm
       contentWrite: false,
       contentRead: false,
     },
+    errors: {},
   };
 
   // 1. Probar perfil de cuenta (account_info.read)
@@ -278,8 +298,7 @@ export async function dropboxTestPermissions(token: string): Promise<DropboxPerm
     result.account = account;
     result.details.accountRead = true;
   } catch (err: any) {
-    result.message = `Fallo al verificar cuenta: ${err.message}`;
-    return result;
+    result.errors!.account = err.message || 'Error al leer perfil de cuenta';
   }
 
   // 2. Probar listar archivos (files.metadata.read)
@@ -287,40 +306,60 @@ export async function dropboxTestPermissions(token: string): Promise<DropboxPerm
     await dropboxListFolder(token, '');
     result.details.metadataRead = true;
   } catch (err: any) {
-    result.message = `Fallo de permiso de metadatos (files.metadata.read): ${err.message}`;
-    return result;
+    result.errors!.metadata = err.message || 'Error al consultar metadatos';
   }
 
   // 3. Probar subida de archivo (files.content.write)
   const testPath = '/.bitacora_perm_check.json';
+  let writeSuccess = false;
   try {
     await dropboxUploadJson(token, testPath, {
       test: true,
       timestamp: new Date().toISOString(),
     });
     result.details.contentWrite = true;
+    writeSuccess = true;
   } catch (err: any) {
-    result.message = `Fallo de permiso de escritura (files.content.write): ${err.message}`;
-    return result;
+    result.errors!.write = err.message || 'Error al escribir archivo';
   }
 
   // 4. Probar descarga de archivo (files.content.read)
-  try {
-    await dropboxDownloadJson(token, testPath);
-    result.details.contentRead = true;
-  } catch (err: any) {
-    result.message = `Fallo de permiso de lectura (files.content.read): ${err.message}`;
-    return result;
+  if (writeSuccess) {
+    try {
+      await dropboxDownloadJson(token, testPath);
+      result.details.contentRead = true;
+    } catch (err: any) {
+      result.errors!.read = err.message || 'Error al leer archivo';
+    }
+
+    // 5. Limpiar archivo de prueba
+    try {
+      await dropboxDeleteFile(token, testPath);
+    } catch {
+      // Si no se puede borrar de inmediato, no es crítico
+    }
+  } else {
+    result.errors!.read = 'No se pudo probar la lectura porque la subida previa falló.';
   }
 
-  // 5. Limpiar archivo de prueba
-  try {
-    await dropboxDeleteFile(token, testPath);
-  } catch {
-    // Si no se puede borrar de inmediato, no es crítico
+  result.ok =
+    result.details.accountRead &&
+    result.details.metadataRead &&
+    result.details.contentWrite &&
+    result.details.contentRead;
+
+  if (result.ok) {
+    result.message = '✓ Conexión y permisos verificados con éxito (Lectura y Escritura activas).';
+  } else {
+    const missing: string[] = [];
+    if (!result.details.accountRead) missing.push('account_info.read');
+    if (!result.details.metadataRead) missing.push('files.metadata.read');
+    if (!result.details.contentWrite) missing.push('files.content.write');
+    if (!result.details.contentRead) missing.push('files.content.read');
+
+    const firstError = result.errors!.metadata || result.errors!.write || result.errors!.account || result.errors!.read || '';
+    result.message = `Permisos pendientes de activar en Dropbox: ${missing.join(', ')}. Recuerda pulsar "Submit" abajo del todo en la pestaña Permissions antes de generar el token. ${firstError ? `(${firstError})` : ''}`;
   }
 
-  result.ok = true;
-  result.message = '✓ Conexión y permisos verificados con éxito (Lectura y Escritura activas).';
   return result;
 }

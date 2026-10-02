@@ -110,6 +110,7 @@ export async function buildDropboxAuthUrl(appKey: string): Promise<string> {
     code_challenge_method: 'S256',
     token_access_type: 'offline', // Imprescindible para obtener refresh_token permanente
     redirect_uri: redirectUri,
+    scope: 'account_info.read files.metadata.read files.content.read files.content.write',
   });
 
   return `https://www.dropbox.com/oauth2/authorize?${params.toString()}`;

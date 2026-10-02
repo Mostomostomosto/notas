@@ -328,18 +328,38 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                 {/* Resultado del test de permisos */}
                 {testResult && (
                   <div
-                    className={`p-3 rounded-xl text-xs space-y-1.5 border ${
+                    className={`p-3 rounded-xl text-xs space-y-2 border ${
                       testResult.ok
                         ? 'bg-[#3F6E64]/10 border-[#3F6E64]/20 text-[#2B2A28]'
                         : 'bg-[#B4553F]/10 border-[#B4553F]/20 text-[#B4553F]'
                     }`}
                   >
-                    <p className="font-semibold text-[11px]">{testResult.message}</p>
-                    <div className="grid grid-cols-2 gap-1 text-[10.5px]">
-                      <div>• Cuenta: {testResult.details.accountRead ? '✓ OK' : '✕ Fallo'}</div>
-                      <div>• Metadatos: {testResult.details.metadataRead ? '✓ OK' : '✕ Fallo'}</div>
-                      <div>• Escritura: {testResult.details.contentWrite ? '✓ OK' : '✕ Fallo'}</div>
-                      <div>• Lectura: {testResult.details.contentRead ? '✓ OK' : '✕ Fallo'}</div>
+                    <p className="font-semibold text-[11px] leading-relaxed">{testResult.message}</p>
+                    <div className="grid grid-cols-2 gap-1.5 text-[10.5px] pt-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#8A8478]">• Cuenta:</span>
+                        <span className={testResult.details.accountRead ? 'font-bold text-[#3F6E64]' : 'font-bold text-[#B4553F]'}>
+                          {testResult.details.accountRead ? '✓ OK' : '✕ Fallo'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#8A8478]">• Metadatos:</span>
+                        <span className={testResult.details.metadataRead ? 'font-bold text-[#3F6E64]' : 'font-bold text-[#B4553F]'}>
+                          {testResult.details.metadataRead ? '✓ OK' : '✕ Fallo'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#8A8478]">• Escritura:</span>
+                        <span className={testResult.details.contentWrite ? 'font-bold text-[#3F6E64]' : 'font-bold text-[#B4553F]'}>
+                          {testResult.details.contentWrite ? '✓ OK' : '✕ Fallo'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#8A8478]">• Lectura:</span>
+                        <span className={testResult.details.contentRead ? 'font-bold text-[#3F6E64]' : 'font-bold text-[#B4553F]'}>
+                          {testResult.details.contentRead ? '✓ OK' : '✕ Fallo'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -350,6 +370,43 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                     {forceUploadMsg}
                   </div>
                 )}
+
+                {/* Desplegable para actualizar o cambiar token manual sin tener que desconectar */}
+                <div className="pt-1 border-t border-[#E4DECE]/70">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualToken(!showManualToken)}
+                    className="w-full text-left text-[11px] text-[#8A8478] hover:text-[#2B2A28] flex items-center justify-between cursor-pointer py-1"
+                  >
+                    <span>¿Necesitas pegar un nuevo Token de Acceso manual?</span>
+                    {showManualToken ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {showManualToken && (
+                    <div className="mt-2 space-y-2 bg-[#EDEAE2]/50 p-3 rounded-xl border border-[#E4DECE] animate-in fade-in">
+                      <p className="text-[11px] text-[#8A8478]">
+                        Pega el nuevo token generado en Dropbox (recuerda haber pulsado <b>Submit</b> en la pestaña <i>Permissions</i>):
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={manualToken}
+                          onChange={(e) => setManualToken(e.target.value)}
+                          placeholder="sl.u..."
+                          className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-[#E4DECE] rounded-lg outline-none font-mono text-[#2B2A28]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveToken}
+                          disabled={isSavingManual}
+                          className="px-3 py-1.5 bg-[#2B2A28] hover:bg-black text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
+                        >
+                          {isSavingManual ? 'Guardando...' : 'Actualizar token'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="space-y-3 pt-1">
@@ -407,12 +464,15 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                         Selecciona <b>Scoped access</b> y luego <b>App folder</b> (así Bitácora solo accederá a su propia carpeta). Ponle un nombre (ej: <code>Bitacora-Notas</code>).
                       </li>
                       <li>
-                        En la pestaña <b>Permissions</b>, marca estas casillas imprescindibles y pulsa <b>Submit</b> abajo:
+                        En la pestaña <b>Permissions</b>, marca estas casillas:
                         <div className="mt-1 ml-4 space-y-0.5 font-mono text-[10px] text-[#3F6E64]">
                           <div>• files.content.write</div>
                           <div>• files.content.read</div>
-                          <div>• files.metadata.read  (necesario para consultar archivos)</div>
+                          <div>• files.metadata.read (se activa automáticamente)</div>
                           <div>• account_info.read</div>
+                        </div>
+                        <div className="mt-1.5 p-2 bg-[#0061FE]/10 border border-[#0061FE]/25 rounded-lg text-[#0061FE] text-[10.5px] font-sans font-medium leading-relaxed">
+                          ⚠️ <b>Paso imprescindible:</b> Desplázate hasta el final de esa pestaña <i>Permissions</i> y pulsa el botón azul <b>&quot;Submit&quot;</b> (o &quot;Enviar&quot;). Si no pulsas Submit, Dropbox no guarda los cambios y el token saldrá sin permisos.
                         </div>
                       </li>
                       <li>
@@ -437,24 +497,29 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                 )}
 
                 {/* Botón conectar con Dropbox */}
-                <button
-                  type="button"
-                  onClick={handleConnect}
-                  disabled={isConnecting}
-                  className="w-full py-2.5 px-3 bg-[#0061FE] hover:bg-[#0052D9] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-                >
-                  {isConnecting ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Conectando con Dropbox...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cloud className="w-4 h-4 text-white" />
-                      <span>Conectar con Dropbox</span>
-                    </>
-                  )}
-                </button>
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={handleConnect}
+                    disabled={isConnecting}
+                    className="w-full py-2.5 px-3 bg-[#0061FE] hover:bg-[#0052D9] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {isConnecting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Conectando con Dropbox...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-4 h-4 text-white" />
+                        <span>Conectar con Dropbox</span>
+                      </>
+                    )}
+                  </button>
+                  <p className="text-[10px] text-[#8A8478] text-center px-1">
+                    💡 Si Windows te pide una <i>&quot;clave de paso / seguridad USB&quot;</i>, pulsa <b>&quot;Cancelar&quot;</b> en esa ventana y Dropbox te dejará identificarte con tu correo y contraseña habituales.
+                  </p>
+                </div>
 
                 {/* Alternativa: Token manual */}
                 <div className="pt-1 border-t border-[#E4DECE]/70">
