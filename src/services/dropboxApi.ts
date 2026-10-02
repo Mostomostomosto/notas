@@ -155,8 +155,9 @@ export async function dropboxListFolder(
       const errorSummary = errJson?.error_summary || '';
       const tag = errJson?.error?.['.tag'] || '';
 
-      // Si la carpeta no existe todavía (path/not_found), la consideramos vacía
+      // Si la carpeta no existe todavía (path/not_found o 409), la consideramos vacía
       if (
+        res.status === 409 ||
         errorSummary.includes('path/not_found') ||
         errorSummary.includes('not_found') ||
         errJson?.error?.path?.['.tag'] === 'not_found'

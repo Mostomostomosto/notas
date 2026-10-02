@@ -3,6 +3,7 @@ import {
   dropboxUploadJson,
   dropboxDownloadJson,
   dropboxListFolder,
+  DropboxFileEntry,
 } from './dropboxApi';
 import { getSettings } from './settings';
 import {
@@ -173,8 +174,26 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
   const executePull = async (activeToken: string) => {
     // 1. Descargar notas remotas
     const notesFolder = getNotesPath();
-    const remoteFiles = await dropboxListFolder(activeToken, notesFolder);
+    let remoteFiles: DropboxFileEntry[] = [];
+    try {
+      remoteFiles = await dropboxListFolder(activeToken, notesFolder);
+    } catch (e: any) {
+      console.warn('Carpeta /notes aún no disponible o vacía en Dropbox:', e);
+      remoteFiles = [];
+    }
+
     const jsonFiles = remoteFiles.filter((f) => f.name.endsWith('.json'));
+
+    // Si Dropbox no tiene notas aún pero existen notas locales, subirlas como copia inicial
+    const allLocalNotes = await db.notes.toArray();
+    if (jsonFiles.length === 0 && allLocalNotes.length > 0) {
+      for (const n of allLocalNotes) {
+        if (n.syncStatus !== 'pending') {
+          await db.notes.update(n.id, { syncStatus: 'pending' });
+        }
+      }
+      await syncPendingNotes(activeToken);
+    }
 
     for (const file of jsonFiles) {
       try {
@@ -209,8 +228,25 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
     // 2. Descargar eventos remotos
     try {
       const eventsFolder = getEventsPath();
-      const remoteEventFiles = await dropboxListFolder(activeToken, eventsFolder);
+      let remoteEventFiles: DropboxFileEntry[] = [];
+      try {
+        remoteEventFiles = await dropboxListFolder(activeToken, eventsFolder);
+      } catch (e: any) {
+        console.warn('Carpeta /events aún no disponible o vacía en Dropbox:', e);
+        remoteEventFiles = [];
+      }
       const jsonEventFiles = remoteEventFiles.filter((f) => f.name.endsWith('.json'));
+
+      // Si Dropbox no tiene eventos aún pero existen eventos locales, subirlos
+      const allLocalEvents = await db.events.toArray();
+      if (jsonEventFiles.length === 0 && allLocalEvents.length > 0) {
+        for (const ev of allLocalEvents) {
+          if (ev.syncStatus !== 'pending') {
+            await db.events.update(ev.id, { syncStatus: 'pending' });
+          }
+        }
+        await syncPendingNotes(activeToken);
+      }
 
       for (const file of jsonEventFiles) {
         try {
