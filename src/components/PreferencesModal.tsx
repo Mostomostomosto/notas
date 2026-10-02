@@ -303,10 +303,11 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                         Selecciona <b>Scoped access</b> y luego <b>App folder</b> (así Bitácora solo accederá a su propia carpeta). Ponle un nombre (ej: <code>Bitacora-Notas</code>).
                       </li>
                       <li>
-                        En la pestaña <b>Permissions</b>, marca las casillas:
+                        En la pestaña <b>Permissions</b>, marca estas casillas imprescindibles y pulsa <b>Submit</b> abajo:
                         <div className="mt-1 ml-4 space-y-0.5 font-mono text-[10px] text-[#3F6E64]">
                           <div>• files.content.write</div>
                           <div>• files.content.read</div>
+                          <div>• files.metadata.read  (necesario para consultar archivos)</div>
                           <div>• account_info.read</div>
                         </div>
                       </li>

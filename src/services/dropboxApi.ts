@@ -152,10 +152,25 @@ export async function dropboxListFolder(
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
+      const errorSummary = errJson?.error_summary || '';
+      const tag = errJson?.error?.['.tag'] || '';
+
       // Si la carpeta no existe todavía (path/not_found), la consideramos vacía
-      if (errJson?.error?.path?.['.tag'] === 'not_found') {
+      if (
+        errorSummary.includes('path/not_found') ||
+        errorSummary.includes('not_found') ||
+        errJson?.error?.path?.['.tag'] === 'not_found'
+      ) {
         return [];
       }
+
+      if (tag === 'missing_scope' || errorSummary.includes('missing_scope')) {
+        const requiredScope = errJson?.error?.required_scope || 'files.metadata.read';
+        throw new Error(
+          `Falta el permiso "${requiredScope}" en tu App de Dropbox. Actívalo en Permissions, pulsa Submit y genera un nuevo token.`
+        );
+      }
+
       throw new Error(`Error al listar carpeta ${normalizedPath} (${res.status}): ${JSON.stringify(errJson)}`);
     }
 

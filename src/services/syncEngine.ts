@@ -156,7 +156,8 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
       }
     }
 
-    notifyState('error', 'Error al sincronizar con Dropbox');
+    const userMessage = err instanceof Error ? err.message : 'Error al sincronizar con Dropbox';
+    notifyState('error', userMessage);
   }
 }
 
@@ -265,7 +266,8 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
       }
     }
 
-    notifyState('error', 'Error al consultar Dropbox');
+    const userMessage = err instanceof Error ? err.message : 'Error al consultar Dropbox';
+    notifyState('error', userMessage);
   }
 }
 
