@@ -66,6 +66,7 @@ export async function dropboxUploadJson(
 ): Promise<DropboxFileEntry> {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const jsonString = JSON.stringify(content, null, 2);
+  const binaryData = new TextEncoder().encode(jsonString);
 
   const res = await fetch(`${DROPBOX_CONTENT_URL}/files/upload`, {
     method: 'POST',
@@ -80,12 +81,29 @@ export async function dropboxUploadJson(
       }),
       'Content-Type': 'application/octet-stream',
     },
-    body: new Blob([jsonString], { type: 'application/json' }),
+    body: binaryData,
   });
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Error al subir archivo a Dropbox en ${normalizedPath} (${res.status}): ${errorText}`);
+    let errorSummary = errorText;
+    try {
+      const errJson = JSON.parse(errorText);
+      if (errJson.error_summary) errorSummary = errJson.error_summary;
+      if (errJson.error?.['.tag'] === 'missing_scope' || errorSummary.includes('missing_scope')) {
+        const requiredScope = errJson.error?.required_scope || 'files.content.write';
+        throw new Error(
+          `Falta el permiso "${requiredScope}" en tu App de Dropbox. Recuerda que al marcar casillas en la consola debes pulsar "Submit" y luego generar un nuevo token.`
+        );
+      }
+      if (errJson.error?.['.tag'] === 'invalid_access_token' || errorSummary.includes('invalid_access_token')) {
+        throw new Error('El token de Dropbox es inválido o ha caducado. Vuelve a conectar o genera un nuevo token.');
+      }
+    } catch (parseErr) {
+      if (parseErr instanceof Error && parseErr.message.includes('Falta el permiso')) throw parseErr;
+      if (parseErr instanceof Error && parseErr.message.includes('token de Dropbox')) throw parseErr;
+    }
+    throw new Error(`Error al subir archivo a Dropbox en ${normalizedPath} (${res.status}): ${errorSummary}`);
   }
 
   return await res.json();
@@ -225,4 +243,84 @@ export async function dropboxDeleteFile(token: string, path: string): Promise<vo
     if (errorText.includes('not_found')) return;
     throw new Error(`Error al eliminar archivo en Dropbox ${normalizedPath} (${res.status}): ${errorText}`);
   }
+}
+
+export interface DropboxPermissionsTestResult {
+  ok: boolean;
+  message: string;
+  account?: DropboxAccount;
+  details: {
+    accountRead: boolean;
+    metadataRead: boolean;
+    contentWrite: boolean;
+    contentRead: boolean;
+  };
+}
+
+/**
+ * Realiza un test exhaustivo de la conexión y de los permisos clave de Dropbox
+ */
+export async function dropboxTestPermissions(token: string): Promise<DropboxPermissionsTestResult> {
+  const result: DropboxPermissionsTestResult = {
+    ok: false,
+    message: '',
+    details: {
+      accountRead: false,
+      metadataRead: false,
+      contentWrite: false,
+      contentRead: false,
+    },
+  };
+
+  // 1. Probar perfil de cuenta (account_info.read)
+  try {
+    const account = await dropboxGetAccount(token);
+    result.account = account;
+    result.details.accountRead = true;
+  } catch (err: any) {
+    result.message = `Fallo al verificar cuenta: ${err.message}`;
+    return result;
+  }
+
+  // 2. Probar listar archivos (files.metadata.read)
+  try {
+    await dropboxListFolder(token, '');
+    result.details.metadataRead = true;
+  } catch (err: any) {
+    result.message = `Fallo de permiso de metadatos (files.metadata.read): ${err.message}`;
+    return result;
+  }
+
+  // 3. Probar subida de archivo (files.content.write)
+  const testPath = '/.bitacora_perm_check.json';
+  try {
+    await dropboxUploadJson(token, testPath, {
+      test: true,
+      timestamp: new Date().toISOString(),
+    });
+    result.details.contentWrite = true;
+  } catch (err: any) {
+    result.message = `Fallo de permiso de escritura (files.content.write): ${err.message}`;
+    return result;
+  }
+
+  // 4. Probar descarga de archivo (files.content.read)
+  try {
+    await dropboxDownloadJson(token, testPath);
+    result.details.contentRead = true;
+  } catch (err: any) {
+    result.message = `Fallo de permiso de lectura (files.content.read): ${err.message}`;
+    return result;
+  }
+
+  // 5. Limpiar archivo de prueba
+  try {
+    await dropboxDeleteFile(token, testPath);
+  } catch {
+    // Si no se puede borrar de inmediato, no es crítico
+  }
+
+  result.ok = true;
+  result.message = '✓ Conexión y permisos verificados con éxito (Lectura y Escritura activas).';
+  return result;
 }

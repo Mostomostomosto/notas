@@ -50,7 +50,7 @@ function getEventsPath(): string {
 }
 
 /**
- * Sube a Dropbox todas las notas y eventos con syncStatus === 'pending' o 'error'
+ * Sube a Dropbox todas las notas y eventos con syncStatus === 'pending', 'error' o 'syncing'
  */
 export async function syncPendingNotes(providedToken?: string | null): Promise<void> {
   if (!navigator.onLine) {
@@ -60,15 +60,16 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
 
   let token = providedToken || (await getValidDropboxAccessToken());
   if (!token) {
+    notifyState('error', 'No hay sesión de Dropbox activa');
     return;
   }
 
   const pendingNotes = await db.notes
-    .filter((n) => n.syncStatus === 'pending' || n.syncStatus === 'error')
+    .filter((n) => n.syncStatus === 'pending' || n.syncStatus === 'error' || n.syncStatus === 'syncing')
     .toArray();
 
   const pendingEvents = await db.events
-    .filter((e) => e.syncStatus === 'pending' || e.syncStatus === 'error')
+    .filter((e) => e.syncStatus === 'pending' || e.syncStatus === 'error' || e.syncStatus === 'syncing')
     .toArray();
 
   const totalPending = pendingNotes.length + pendingEvents.length;
@@ -99,11 +100,13 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
         };
 
         const filePath = `${notesFolder}/${note.id}.json`;
-        await dropboxUploadJson(activeToken, filePath, payload);
-
-        await db.notes.update(note.id, {
-          syncStatus: 'synced',
-        });
+        try {
+          await dropboxUploadJson(activeToken, filePath, payload);
+          await db.notes.update(note.id, { syncStatus: 'synced' });
+        } catch (uploadErr) {
+          await db.notes.update(note.id, { syncStatus: 'error' });
+          throw uploadErr;
+        }
       }
     }
 
@@ -127,11 +130,13 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
         };
 
         const filePath = `${eventsFolder}/${event.id}.json`;
-        await dropboxUploadJson(activeToken, filePath, payload);
-
-        await db.events.update(event.id, {
-          syncStatus: 'synced',
-        });
+        try {
+          await dropboxUploadJson(activeToken, filePath, payload);
+          await db.events.update(event.id, { syncStatus: 'synced' });
+        } catch (uploadErr) {
+          await db.events.update(event.id, { syncStatus: 'error' });
+          throw uploadErr;
+        }
       }
     }
   };
@@ -159,6 +164,7 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
 
     const userMessage = err instanceof Error ? err.message : 'Error al sincronizar con Dropbox';
     notifyState('error', userMessage);
+    throw err;
   }
 }
 
@@ -178,8 +184,12 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
     try {
       remoteFiles = await dropboxListFolder(activeToken, notesFolder);
     } catch (e: any) {
-      console.warn('Carpeta /notes aún no disponible o vacía en Dropbox:', e);
-      remoteFiles = [];
+      const errStr = String(e);
+      if (errStr.includes('not_found')) {
+        remoteFiles = [];
+      } else {
+        throw e;
+      }
     }
 
     const jsonFiles = remoteFiles.filter((f) => f.name.endsWith('.json'));
@@ -188,9 +198,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
     const allLocalNotes = await db.notes.toArray();
     if (jsonFiles.length === 0 && allLocalNotes.length > 0) {
       for (const n of allLocalNotes) {
-        if (n.syncStatus !== 'pending') {
-          await db.notes.update(n.id, { syncStatus: 'pending' });
-        }
+        await db.notes.update(n.id, { syncStatus: 'pending' });
       }
       await syncPendingNotes(activeToken);
     }
@@ -213,7 +221,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
           const localTime = new Date(localNote.updatedAt).getTime();
 
           // Si el archivo remoto es más reciente y no tenemos cambios pendientes locales
-          if (remoteTime > localTime && localNote.syncStatus !== 'pending') {
+          if (remoteTime > localTime && localNote.syncStatus !== 'pending' && localNote.syncStatus !== 'syncing') {
             await db.notes.put({
               ...remoteNote,
               syncStatus: 'synced',
@@ -232,8 +240,12 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
       try {
         remoteEventFiles = await dropboxListFolder(activeToken, eventsFolder);
       } catch (e: any) {
-        console.warn('Carpeta /events aún no disponible o vacía en Dropbox:', e);
-        remoteEventFiles = [];
+        const errStr = String(e);
+        if (errStr.includes('not_found')) {
+          remoteEventFiles = [];
+        } else {
+          throw e;
+        }
       }
       const jsonEventFiles = remoteEventFiles.filter((f) => f.name.endsWith('.json'));
 
@@ -241,9 +253,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
       const allLocalEvents = await db.events.toArray();
       if (jsonEventFiles.length === 0 && allLocalEvents.length > 0) {
         for (const ev of allLocalEvents) {
-          if (ev.syncStatus !== 'pending') {
-            await db.events.update(ev.id, { syncStatus: 'pending' });
-          }
+          await db.events.update(ev.id, { syncStatus: 'pending' });
         }
         await syncPendingNotes(activeToken);
       }
@@ -265,7 +275,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
             const remoteTime = new Date(remoteEvent.updatedAt).getTime();
             const localTime = new Date(localEvent.updatedAt).getTime();
 
-            if (remoteTime > localTime && localEvent.syncStatus !== 'pending') {
+            if (remoteTime > localTime && localEvent.syncStatus !== 'pending' && localEvent.syncStatus !== 'syncing') {
               await db.events.put({
                 ...remoteEvent,
                 syncStatus: 'synced',
@@ -278,6 +288,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
       }
     } catch (e) {
       console.warn('Error al reconciliar eventos remotos de Dropbox:', e);
+      throw e;
     }
   };
 
@@ -304,6 +315,7 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 
     const userMessage = err instanceof Error ? err.message : 'Error al consultar Dropbox';
     notifyState('error', userMessage);
+    throw err;
   }
 }
 
@@ -313,8 +325,46 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 export async function runFullSync(token?: string | null): Promise<void> {
   const activeToken = token || (await getValidDropboxAccessToken());
   if (!activeToken) return;
-  await syncPendingNotes(activeToken);
-  await pullRemoteNotes(activeToken);
+  try {
+    await syncPendingNotes(activeToken);
+    await pullRemoteNotes(activeToken);
+  } catch (err) {
+    console.error('Fallo en runFullSync:', err);
+  }
+}
+
+/**
+ * Fuerza la subida completa de todas las notas y eventos locales a Dropbox,
+ * marcándolos como pendientes y ejecutando la subida inmediata.
+ */
+export async function forceUploadAllToDropbox(providedToken?: string | null): Promise<{
+  notesCount: number;
+  eventsCount: number;
+}> {
+  const token = providedToken || (await getValidDropboxAccessToken());
+  if (!token) {
+    throw new Error('No hay sesión de Dropbox activa. Conecta tu cuenta primero.');
+  }
+
+  notifyState('syncing', 'Preparando subida completa a Dropbox...');
+
+  const allNotes = await db.notes.toArray();
+  for (const n of allNotes) {
+    await db.notes.update(n.id, { syncStatus: 'pending' });
+  }
+
+  const allEvents = await db.events.toArray();
+  for (const e of allEvents) {
+    await db.events.update(e.id, { syncStatus: 'pending' });
+  }
+
+  await syncPendingNotes(token);
+  notifyState('idle', `Sincronizado (${allNotes.length} notas subidas)`);
+
+  return {
+    notesCount: allNotes.length,
+    eventsCount: allEvents.length,
+  };
 }
 
 /**
@@ -332,7 +382,11 @@ export function scheduleSync(token?: string | null): void {
   syncTimeout = window.setTimeout(async () => {
     const activeToken = token || (await getValidDropboxAccessToken());
     if (activeToken) {
-      await syncPendingNotes(activeToken);
+      try {
+        await syncPendingNotes(activeToken);
+      } catch (e) {
+        console.error('Error en sync automático debounced:', e);
+      }
     }
   }, 1500);
 }

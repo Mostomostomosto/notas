@@ -2,13 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import { getSettings, saveSettings } from '../services/settings';
-import { SyncState } from '../services/syncEngine';
+import { SyncState, forceUploadAllToDropbox } from '../services/syncEngine';
 import {
   DropboxUserProfile,
   getDropboxAppKey,
   setDropboxAppKey,
   getDropboxRedirectUri,
 } from '../services/dropboxAuth';
+import {
+  dropboxTestPermissions,
+  DropboxPermissionsTestResult,
+} from '../services/dropboxApi';
 import {
   X,
   Cloud,
@@ -24,6 +28,7 @@ import {
   ChevronUp,
   Copy,
   FolderSync,
+  Upload,
 } from 'lucide-react';
 
 interface PreferencesModalProps {
@@ -60,6 +65,11 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
   const [isSavingManual, setIsSavingManual] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [testResult, setTestResult] = useState<DropboxPermissionsTestResult | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [isForceUploading, setIsForceUploading] = useState(false);
+  const [forceUploadMsg, setForceUploadMsg] = useState<string | null>(null);
 
   const redirectUri = getDropboxRedirectUri();
 
@@ -146,6 +156,39 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
     saveSettings({ autoSync: newVal });
   };
 
+  const handleTestPermissions = async () => {
+    if (!token) return;
+    setIsTesting(true);
+    setTestResult(null);
+    setErrorMessage(null);
+    try {
+      const res = await dropboxTestPermissions(token);
+      setTestResult(res);
+      if (!res.ok) {
+        setErrorMessage(res.message);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Fallo durante la comprobación de Dropbox');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleForceUpload = async () => {
+    if (!token) return;
+    setIsForceUploading(true);
+    setForceUploadMsg(null);
+    setErrorMessage(null);
+    try {
+      const res = await forceUploadAllToDropbox(token);
+      setForceUploadMsg(`¡Éxito! Se han subido ${res.notesCount} notas y ${res.eventsCount} eventos a Dropbox.`);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error al forzar la subida a Dropbox');
+    } finally {
+      setIsForceUploading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150 select-none">
       <div
@@ -182,7 +225,7 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
           {errorMessage && (
             <div className="bg-[#B4553F]/10 border border-[#B4553F]/20 text-[#B4553F] p-3 rounded-xl text-xs flex items-start gap-2">
               <span className="font-bold">⚠️</span>
-              <div className="flex-1">{errorMessage}</div>
+              <div className="flex-1 font-medium">{errorMessage}</div>
             </div>
           )}
 
@@ -240,12 +283,73 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
                   </button>
                 </div>
 
-                <div className="text-[11px] leading-relaxed bg-[#3F6E64]/10 text-[#3F6E64] p-2.5 rounded-lg font-medium flex items-center gap-2">
-                  <span>✓</span>
-                  <span>
-                    Tus notas se sincronizan automáticamente en tu Dropbox privado en la carpeta <code>/Apps/Bitácora</code>.
-                  </span>
+                {/* Aclaración sobre ubicación de la carpeta en Dropbox */}
+                <div className="text-[11px] leading-relaxed bg-[#3F6E64]/10 text-[#3F6E64] p-3 rounded-xl font-medium space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <span>📁</span>
+                    <span>Ubicación de tus notas en Dropbox:</span>
+                  </div>
+                  <p className="text-[10.5px] text-[#2B2A28] pl-5">
+                    Tus notas se guardan en la carpeta exclusiva de la aplicación:
+                    <br />
+                    <code className="bg-white/80 px-1.5 py-0.5 rounded font-mono text-[#0061FE]">
+                      Dropbox &gt; Aplicaciones &gt; [Nombre de tu App] &gt; notes
+                    </code>
+                    <br />
+                    <span className="text-[10px] text-[#8A8478] italic">
+                      (Nota: Las Apps de tipo &quot;App folder&quot; residen siempre dentro de la carpeta &quot;Aplicaciones&quot; en Dropbox, no en la raíz).
+                    </span>
+                  </p>
                 </div>
+
+                {/* Botones de acción y prueba */}
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleTestPermissions}
+                    disabled={isTesting}
+                    className="flex-1 py-2 px-3 bg-[#F7F4EE] hover:bg-[#EDEAE2] border border-[#E4DECE] rounded-lg text-xs font-medium text-[#2B2A28] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors"
+                  >
+                    <ShieldCheck className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin text-[#0061FE]' : 'text-[#3F6E64]'}`} />
+                    <span>{isTesting ? 'Verificando...' : 'Comprobar permisos'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleForceUpload}
+                    disabled={isForceUploading}
+                    className="flex-1 py-2 px-3 bg-[#0061FE] hover:bg-[#0052D9] text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors shadow-xs"
+                  >
+                    <Upload className={`w-3.5 h-3.5 ${isForceUploading ? 'animate-spin' : ''}`} />
+                    <span>{isForceUploading ? 'Subiendo notas...' : 'Subir todas las notas a Dropbox'}</span>
+                  </button>
+                </div>
+
+                {/* Resultado del test de permisos */}
+                {testResult && (
+                  <div
+                    className={`p-3 rounded-xl text-xs space-y-1.5 border ${
+                      testResult.ok
+                        ? 'bg-[#3F6E64]/10 border-[#3F6E64]/20 text-[#2B2A28]'
+                        : 'bg-[#B4553F]/10 border-[#B4553F]/20 text-[#B4553F]'
+                    }`}
+                  >
+                    <p className="font-semibold text-[11px]">{testResult.message}</p>
+                    <div className="grid grid-cols-2 gap-1 text-[10.5px]">
+                      <div>• Cuenta: {testResult.details.accountRead ? '✓ OK' : '✕ Fallo'}</div>
+                      <div>• Metadatos: {testResult.details.metadataRead ? '✓ OK' : '✕ Fallo'}</div>
+                      <div>• Escritura: {testResult.details.contentWrite ? '✓ OK' : '✕ Fallo'}</div>
+                      <div>• Lectura: {testResult.details.contentRead ? '✓ OK' : '✕ Fallo'}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Mensaje de subida forzada */}
+                {forceUploadMsg && (
+                  <div className="bg-[#3F6E64]/10 border border-[#3F6E64]/20 text-[#3F6E64] p-2.5 rounded-xl text-xs font-medium">
+                    {forceUploadMsg}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-3 pt-1">
