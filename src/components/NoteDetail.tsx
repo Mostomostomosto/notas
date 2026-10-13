@@ -12,6 +12,7 @@ import {
   GalleryItem,
   Tag,
   desaturateColor,
+  getTagDepth,
 } from '../db/db';
 import { scheduleSync } from '../services/syncEngine';
 import {
@@ -1943,7 +1944,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               </button>
 
               {/* Dropdown de etiquetas */}
-              <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[150px] max-h-64 overflow-y-auto">
+              <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[170px] max-h-64 overflow-y-auto">
                 {tags
                   .filter((t: Tag) => !t.parentId && !t.archived)
                   .map((parentTag: Tag) => {
@@ -1960,19 +1961,38 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                           />
                           <span className="font-medium">{parentTag.name}</span>
                         </button>
-                        {children.map((child: Tag) => (
-                          <button
-                            key={child.id}
-                            onClick={() => handleSelectTag(child.name)}
-                            className="w-full flex items-center gap-2 pl-6 pr-2.5 py-1 text-[11.5px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
-                          >
-                            <span
-                              className="w-1.5 h-1.5 rounded-full shrink-0"
-                              style={{ backgroundColor: desaturateColor(child.color) }}
-                            />
-                            <span>{child.name}</span>
-                          </button>
-                        ))}
+                        {children.map((child: Tag) => {
+                          const grandChildren = tags.filter(
+                            (t: Tag) => t.parentId === child.id && !t.archived
+                          );
+                          return (
+                            <div key={child.id}>
+                              <button
+                                onClick={() => handleSelectTag(child.name)}
+                                className="w-full flex items-center gap-2 pl-6 pr-2.5 py-1 text-[11.5px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
+                              >
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: desaturateColor(child.color, 0.55) }}
+                                />
+                                <span>{child.name}</span>
+                              </button>
+                              {grandChildren.map((grandChild: Tag) => (
+                                <button
+                                  key={grandChild.id}
+                                  onClick={() => handleSelectTag(grandChild.name)}
+                                  className="w-full flex items-center gap-2 pl-10 pr-2.5 py-1 text-[11px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28]/85 text-left cursor-pointer"
+                                >
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{ backgroundColor: desaturateColor(grandChild.color, 0.3) }}
+                                  />
+                                  <span>{grandChild.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
@@ -2148,9 +2168,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               <span
                 className="w-2 h-2 rounded-full"
                 style={{
-                  backgroundColor: activeTag?.parentId
-                    ? desaturateColor(activeTag.color)
-                    : (activeTag?.color || '#8A8478'),
+                  backgroundColor: activeTag
+                    ? (activeTag.parentId
+                        ? desaturateColor(
+                            activeTag.color,
+                            getTagDepth(activeTag.id, tags) >= 2 ? 0.3 : 0.55
+                          )
+                        : activeTag.color)
+                    : '#8A8478',
                 }}
               />
               {localNote.tag}

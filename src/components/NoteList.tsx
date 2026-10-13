@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, Tag, isNoteArchived } from '../db/db';
+import { db, Note, Tag, isNoteArchived, getDescendantTags, getArchivedAncestor } from '../db/db';
 import { SidebarFilter } from './Sidebar';
 import { Search, Plus, Pin, FileText, Image as ImageIcon, Archive } from 'lucide-react';
 
@@ -33,14 +33,13 @@ export const NoteList: React.FC<NoteListProps> = ({
       return note.pinned === true && !isNoteArchived(note.tag, tags);
     }
     if (currentFilter.type === 'tag') {
-      const childTagNames = tags
-        .filter((t: Tag) => t.parentId === currentFilter.tagId)
-        .map((t: Tag) => t.name.toLowerCase());
+      const descendantTags = getDescendantTags(currentFilter.tagId, tags);
+      const allTagNames = [
+        currentFilter.tagName.toLowerCase(),
+        ...descendantTags.map((t: Tag) => t.name.toLowerCase()),
+      ];
       const noteTag = (note.tag || '').toLowerCase();
-      return (
-        noteTag === currentFilter.tagName.toLowerCase() ||
-        childTagNames.includes(noteTag)
-      );
+      return allTagNames.includes(noteTag);
     }
     return !isNoteArchived(note.tag, tags); // 'all'
   });
@@ -149,8 +148,7 @@ export const NoteList: React.FC<NoteListProps> = ({
 
   const currentTag = currentFilter.type === 'tag' ? tags.find((t) => t.id === currentFilter.tagId) : null;
   const isCurrentTagArchived = currentTag?.archived === true;
-  const parentTag = currentTag?.parentId ? tags.find((t) => t.id === currentTag.parentId) : null;
-  const isParentArchived = parentTag?.archived === true;
+  const archivedAncestor = currentTag ? getArchivedAncestor(currentTag, tags) : null;
 
   return (
     <div className="w-80 bg-white border-r border-[#E4DECE] flex flex-col h-full min-w-0">
@@ -190,13 +188,13 @@ export const NoteList: React.FC<NoteListProps> = ({
             </button>
           </div>
         )}
-        {!isCurrentTagArchived && isParentArchived && parentTag && (
+        {!isCurrentTagArchived && archivedAncestor && (
           <div className="mb-2.5 p-2.5 bg-[#EDEAE2] border border-[#E4DECE] rounded-lg flex items-center justify-between gap-2 shadow-2xs">
             <div className="flex items-center gap-2 min-w-0">
               <Archive className="w-4 h-4 text-[#8A8478] shrink-0" />
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-[#2B2A28] block truncate">
-                  Padre "{parentTag.name}" archivado
+                  Etiqueta superior "{archivedAncestor.name}" archivada
                 </span>
                 <span className="text-[10px] text-[#8A8478] block truncate">
                   Oculta por pertenecer a una etiqueta archivada
@@ -206,11 +204,11 @@ export const NoteList: React.FC<NoteListProps> = ({
             <button
               type="button"
               onClick={async () => {
-                await db.tags.update(parentTag.id, { archived: false });
+                await db.tags.update(archivedAncestor.id, { archived: false });
               }}
               className="px-2.5 py-1 bg-[#3F6E64] hover:bg-[#345951] text-[#F7F4EE] rounded-md text-xs font-semibold shrink-0 cursor-pointer transition-colors shadow-xs"
             >
-              Desarchivar {parentTag.name}
+              Desarchivar {archivedAncestor.name}
             </button>
           </div>
         )}

@@ -148,19 +148,76 @@ export class NotasDatabase extends Dexie {
 export const db = new NotasDatabase();
 
 /**
+ * Calcula la profundidad en el árbol de etiquetas:
+ * 0 = raíz (sin parentId)
+ * 1 = hija de primer nivel
+ * 2 = nieta (subetiqueta de 2º nivel)
+ */
+export function getTagDepth(tagId: string, tags: Tag[]): number {
+  let depth = 0;
+  let curr = tags.find((t) => t.id === tagId);
+  const visited = new Set<string>();
+  while (curr && curr.parentId && !visited.has(curr.id)) {
+    visited.add(curr.id);
+    depth++;
+    curr = tags.find((t) => t.id === curr!.parentId);
+  }
+  return depth;
+}
+
+/**
+ * Obtiene todas las etiquetas descendientes (hijas, nietas, etc.) de una etiqueta dada
+ */
+export function getDescendantTags(tagId: string, tags: Tag[]): Tag[] {
+  const result: Tag[] = [];
+  const queue = [tagId];
+  const visited = new Set<string>([tagId]);
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const children = tags.filter((t) => t.parentId === currentId && !visited.has(t.id));
+    for (const child of children) {
+      visited.add(child.id);
+      result.push(child);
+      queue.push(child.id);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Obtiene el primer ancestro archivado de una etiqueta, si alguno está archivado
+ */
+export function getArchivedAncestor(tag: Tag, tags: Tag[]): Tag | null {
+  let curr: Tag | undefined = tag;
+  const visited = new Set<string>();
+  while (curr && curr.parentId && !visited.has(curr.id)) {
+    visited.add(curr.id);
+    curr = tags.find((t) => t.id === curr!.parentId);
+    if (curr && curr.archived === true) {
+      return curr;
+    }
+  }
+  return null;
+}
+
+/**
  * Determina si una nota se considera archivada según la regla calculada:
  * - Su propia etiqueta tiene archived: true, O
- * - La etiqueta padre de su etiqueta (si la tiene) tiene archived: true.
+ * - Cualquiera de sus etiquetas ancestras (padre, abuelo, etc.) tiene archived: true.
  * NO propaga físicamente ningún flag; calcula la visibilidad en tiempo de ejecución.
  */
 export function isNoteArchived(noteTag: string | undefined, tags: Tag[]): boolean {
   if (!noteTag) return false;
-  const tag = tags.find((t) => t.name.toLowerCase() === noteTag.toLowerCase());
+  let tag = tags.find((t) => t.name.toLowerCase() === noteTag.toLowerCase());
   if (!tag) return false;
-  if (tag.archived === true) return true;
-  if (tag.parentId) {
-    const parentTag = tags.find((t) => t.id === tag.parentId);
-    if (parentTag && parentTag.archived === true) return true;
+  const visited = new Set<string>();
+  while (tag && !visited.has(tag.id)) {
+    if (tag.archived === true) return true;
+    visited.add(tag.id);
+    if (!tag.parentId) break;
+    tag = tags.find((t) => t.id === tag!.parentId);
   }
   return false;
 }

@@ -148,14 +148,11 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
       }
     }
 
-    // 3. Subir catálogo de etiquetas si existen
+    // 3. Sincronizar catálogo de etiquetas
     try {
-      const allTags = await db.tags.toArray();
-      if (allTags.length > 0) {
-        await dropboxUploadJson(activeToken, '/tags.json', allTags);
-      }
+      await syncTags(activeToken);
     } catch (tagsErr) {
-      console.warn('No se pudo subir catálogo de etiquetas a Dropbox:', tagsErr);
+      console.warn('No se pudo sincronizar catálogo de etiquetas con Dropbox:', tagsErr);
     }
   };
 
@@ -196,6 +193,13 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
   if (!token) return;
 
   const executePull = async (activeToken: string) => {
+    // 0. Sincronizar catálogo de etiquetas antes de procesar notas
+    try {
+      await syncTags(activeToken);
+    } catch (tagsErr) {
+      console.warn('Aviso al sincronizar etiquetas previo a pullRemoteNotes:', tagsErr);
+    }
+
     // 1. Descargar notas remotas
     const notesFolder = getNotesPath();
     let remoteFiles: DropboxFileEntry[] = [];

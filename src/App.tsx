@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Note, Tag, AppEvent, seedInitialData, isNoteArchived } from './db/db';
+import { db, Note, Tag, AppEvent, seedInitialData, isNoteArchived, getDescendantTags } from './db/db';
 import { Sidebar, SidebarFilter } from './components/Sidebar';
 import { NoteList } from './components/NoteList';
 import { NoteDetail } from './components/NoteDetail';
@@ -188,11 +188,13 @@ export const App: React.FC = () => {
     setDeleteToastTimeout(timer);
 
     if (isDesktop) {
-      const childTagNames =
+      const descendantTags =
         currentFilter.type === 'tag'
-          ? tags
-              .filter((t: Tag) => t.parentId === currentFilter.tagId)
-              .map((t: Tag) => t.name.toLowerCase())
+          ? getDescendantTags(currentFilter.tagId, tags)
+          : [];
+      const filterTagNames =
+        currentFilter.type === 'tag'
+          ? [currentFilter.tagName.toLowerCase(), ...descendantTags.map((t: Tag) => t.name.toLowerCase())]
           : [];
 
       const remaining = notes.filter((n) => {
@@ -202,10 +204,7 @@ export const App: React.FC = () => {
         if (currentFilter.type === 'pinned') return n.pinned === true && !isNoteArchived(n.tag, tags);
         if (currentFilter.type === 'tag') {
           const noteTag = (n.tag || '').toLowerCase();
-          return (
-            noteTag === currentFilter.tagName.toLowerCase() ||
-            childTagNames.includes(noteTag)
-          );
+          return filterTagNames.includes(noteTag);
         }
         return !isNoteArchived(n.tag, tags);
       });
