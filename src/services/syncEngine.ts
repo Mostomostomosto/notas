@@ -1,4 +1,4 @@
-import { db, Note, AppEvent } from '../db/db';
+import { db, Note, AppEvent, Tag } from '../db/db';
 import {
   dropboxUploadJson,
   dropboxDownloadJson,
@@ -101,8 +101,12 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
 
         const filePath = `${notesFolder}/${note.id}.json`;
         try {
-          await dropboxUploadJson(activeToken, filePath, payload);
-          await db.notes.update(note.id, { syncStatus: 'synced' });
+          const uploadResult = await dropboxUploadJson(activeToken, filePath, payload);
+          await db.notes.update(note.id, {
+            syncStatus: 'synced',
+            remoteRev: uploadResult.rev,
+            remoteModified: uploadResult.server_modified,
+          });
         } catch (uploadErr) {
           await db.notes.update(note.id, { syncStatus: 'error' });
           throw uploadErr;
@@ -131,13 +135,27 @@ export async function syncPendingNotes(providedToken?: string | null): Promise<v
 
         const filePath = `${eventsFolder}/${event.id}.json`;
         try {
-          await dropboxUploadJson(activeToken, filePath, payload);
-          await db.events.update(event.id, { syncStatus: 'synced' });
+          const uploadResult = await dropboxUploadJson(activeToken, filePath, payload);
+          await db.events.update(event.id, {
+            syncStatus: 'synced',
+            remoteRev: uploadResult.rev,
+            remoteModified: uploadResult.server_modified,
+          });
         } catch (uploadErr) {
           await db.events.update(event.id, { syncStatus: 'error' });
           throw uploadErr;
         }
       }
+    }
+
+    // 3. Subir catálogo de etiquetas si existen
+    try {
+      const allTags = await db.tags.toArray();
+      if (allTags.length > 0) {
+        await dropboxUploadJson(activeToken, '/tags.json', allTags);
+      }
+    } catch (tagsErr) {
+      console.warn('No se pudo subir catálogo de etiquetas a Dropbox:', tagsErr);
     }
   };
 
@@ -205,26 +223,56 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 
     for (const file of jsonFiles) {
       try {
+        const noteId = file.name.replace(/\.json$/i, '');
+        const localNote = await db.notes.get(noteId);
+
+        // Si ya tenemos la nota sincronizada y no ha cambiado en Dropbox, nos saltamos la descarga de red
+        if (
+          localNote &&
+          localNote.syncStatus === 'synced' &&
+          ((file.rev && localNote.remoteRev === file.rev) ||
+           (file.server_modified && localNote.remoteModified === file.server_modified))
+        ) {
+          continue;
+        }
+
         const filePath = file.path_display || file.path_lower || `${notesFolder}/${file.name}`;
         const remoteNote = await dropboxDownloadJson<Note>(activeToken, filePath);
         if (!remoteNote || !remoteNote.id) continue;
-
-        const localNote = await db.notes.get(remoteNote.id);
 
         if (!localNote) {
           await db.notes.put({
             ...remoteNote,
             syncStatus: 'synced',
+            remoteRev: file.rev,
+            remoteModified: file.server_modified,
           });
         } else {
           const remoteTime = new Date(remoteNote.updatedAt).getTime();
           const localTime = new Date(localNote.updatedAt).getTime();
 
-          // Si el archivo remoto es más reciente y no tenemos cambios pendientes locales
-          if (remoteTime > localTime && localNote.syncStatus !== 'pending' && localNote.syncStatus !== 'syncing') {
-            await db.notes.put({
-              ...remoteNote,
-              syncStatus: 'synced',
+          // Si el archivo remoto es más reciente o local no tiene cambios pendientes de subir
+          if (localNote.syncStatus !== 'pending' && localNote.syncStatus !== 'syncing') {
+            if (remoteTime >= localTime || !localNote.remoteRev) {
+              await db.notes.put({
+                ...remoteNote,
+                syncStatus: 'synced',
+                remoteRev: file.rev,
+                remoteModified: file.server_modified,
+              });
+            }
+          }
+        }
+
+        // Si la nota remota tiene una etiqueta que no existe en el catálogo local, registrarla automáticamente
+        if (remoteNote.tag && remoteNote.tag.trim() && remoteNote.tag.toLowerCase() !== 'sin etiqueta') {
+          const tagName = remoteNote.tag.trim();
+          const existingTag = await db.tags.filter((t) => t.name.toLowerCase() === tagName.toLowerCase()).first();
+          if (!existingTag) {
+            await db.tags.add({
+              id: `tag_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              name: tagName,
+              color: '#5B7DB1',
             });
           }
         }
@@ -260,26 +308,42 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 
       for (const file of jsonEventFiles) {
         try {
+          const eventId = file.name.replace(/\.json$/i, '');
+          const localEvent = await db.events.get(eventId);
+
+          if (
+            localEvent &&
+            localEvent.syncStatus === 'synced' &&
+            ((file.rev && localEvent.remoteRev === file.rev) ||
+             (file.server_modified && localEvent.remoteModified === file.server_modified))
+          ) {
+            continue;
+          }
+
           const filePath = file.path_display || file.path_lower || `${eventsFolder}/${file.name}`;
           const remoteEvent = await dropboxDownloadJson<AppEvent>(activeToken, filePath);
           if (!remoteEvent || !remoteEvent.id) continue;
-
-          const localEvent = await db.events.get(remoteEvent.id);
 
           if (!localEvent) {
             await db.events.put({
               ...remoteEvent,
               syncStatus: 'synced',
+              remoteRev: file.rev,
+              remoteModified: file.server_modified,
             });
           } else {
             const remoteTime = new Date(remoteEvent.updatedAt).getTime();
             const localTime = new Date(localEvent.updatedAt).getTime();
 
-            if (remoteTime > localTime && localEvent.syncStatus !== 'pending' && localEvent.syncStatus !== 'syncing') {
-              await db.events.put({
-                ...remoteEvent,
-                syncStatus: 'synced',
-              });
+            if (localEvent.syncStatus !== 'pending' && localEvent.syncStatus !== 'syncing') {
+              if (remoteTime >= localTime || !localEvent.remoteRev) {
+                await db.events.put({
+                  ...remoteEvent,
+                  syncStatus: 'synced',
+                  remoteRev: file.rev,
+                  remoteModified: file.server_modified,
+                });
+              }
             }
           }
         } catch (e) {
@@ -289,6 +353,24 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
     } catch (e) {
       console.warn('Error al reconciliar eventos remotos de Dropbox:', e);
       throw e;
+    }
+
+    // 3. Descargar y reconciliar catálogo de etiquetas
+    try {
+      const remoteTags = await dropboxDownloadJson<Tag[]>(activeToken, '/tags.json');
+      if (Array.isArray(remoteTags) && remoteTags.length > 0) {
+        for (const rt of remoteTags) {
+          if (!rt.id || !rt.name) continue;
+          const existing = await db.tags.get(rt.id);
+          if (!existing) {
+            await db.tags.put(rt);
+          } else {
+            await db.tags.put({ ...existing, ...rt });
+          }
+        }
+      }
+    } catch {
+      // Si /tags.json no existe aún en Dropbox, se ignora silenciosamente
     }
   };
 
@@ -325,11 +407,18 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 export async function runFullSync(token?: string | null): Promise<void> {
   const activeToken = token || (await getValidDropboxAccessToken());
   if (!activeToken) return;
+
   try {
     await syncPendingNotes(activeToken);
+  } catch (err) {
+    console.warn('Aviso en subida de notas durante runFullSync:', err);
+  }
+
+  try {
     await pullRemoteNotes(activeToken);
   } catch (err) {
-    console.error('Fallo en runFullSync:', err);
+    console.error('Fallo en descarga de notas durante runFullSync:', err);
+    throw err;
   }
 }
 

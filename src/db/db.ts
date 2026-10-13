@@ -83,6 +83,8 @@ export interface Note {
   blocks: NoteBlock[];
   driveFileId?: string; // ID asignado por Google Drive
   syncStatus?: 'synced' | 'pending' | 'syncing' | 'error';
+  remoteRev?: string;
+  remoteModified?: string;
 }
 
 export interface Tag {
@@ -107,6 +109,8 @@ export interface AppEvent {
   driveFileId?: string;
   syncStatus?: 'synced' | 'pending' | 'syncing' | 'error';
   deleted?: boolean;
+  remoteRev?: string;
+  remoteModified?: string;
 }
 
 export interface SyncQueueItem {

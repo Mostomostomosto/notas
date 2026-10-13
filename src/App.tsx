@@ -140,9 +140,10 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleTriggerSync = () => {
-    if (token) {
-      runFullSync(token);
+  const handleTriggerSync = async () => {
+    const activeToken = token || (await getValidDropboxAccessToken());
+    if (activeToken) {
+      runFullSync(activeToken);
     }
   };
 
@@ -172,6 +173,7 @@ export const App: React.FC = () => {
 
     await db.notes.add(newNote);
     setSelectedNoteId(newId);
+    scheduleSync(token);
   };
 
   // Manejador al eliminar una nota (guarda referencia para poder deshacer)

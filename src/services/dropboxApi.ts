@@ -20,7 +20,9 @@ export interface DropboxFileEntry {
   name: string;
   path_lower: string;
   path_display: string;
+  client_modified?: string;
   server_modified?: string;
+  rev?: string;
   size?: number;
 }
 
@@ -96,7 +98,12 @@ export async function dropboxUploadJson(
           `Falta el permiso "${requiredScope}" en tu App de Dropbox. Recuerda que al marcar casillas en la consola debes pulsar "Submit" y luego generar un nuevo token.`
         );
       }
-      if (errJson.error?.['.tag'] === 'invalid_access_token' || errorSummary.includes('invalid_access_token')) {
+      if (
+        errJson.error?.['.tag'] === 'invalid_access_token' ||
+        errJson.error?.['.tag'] === 'expired_access_token' ||
+        errorSummary.includes('invalid_access_token') ||
+        errorSummary.includes('expired_access_token')
+      ) {
         throw new Error('El token de Dropbox es inválido o ha caducado. Vuelve a conectar o genera un nuevo token.');
       }
     } catch (parseErr) {
@@ -131,10 +138,30 @@ export async function dropboxDownloadJson<T = unknown>(
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Error al descargar archivo de Dropbox ${normalizedPath} (${res.status}): ${errorText}`);
+    let errorSummary = errorText;
+    try {
+      const errJson = JSON.parse(errorText);
+      if (errJson.error_summary) errorSummary = errJson.error_summary;
+      if (
+        errJson.error?.['.tag'] === 'invalid_access_token' ||
+        errJson.error?.['.tag'] === 'expired_access_token' ||
+        errorSummary.includes('invalid_access_token') ||
+        errorSummary.includes('expired_access_token')
+      ) {
+        throw new Error('El token de Dropbox es inválido o ha caducado. Vuelve a conectar o genera un nuevo token.');
+      }
+    } catch (parseErr) {
+      if (parseErr instanceof Error && parseErr.message.includes('token de Dropbox')) throw parseErr;
+    }
+    throw new Error(`Error al descargar archivo de Dropbox ${normalizedPath} (${res.status}): ${errorSummary}`);
   }
 
-  return await res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (parseErr) {
+    throw new Error(`Error al parsear archivo JSON desde Dropbox en ${normalizedPath}: ${String(parseErr)}`);
+  }
 }
 
 /**
@@ -199,7 +226,14 @@ export async function dropboxListFolder(
         );
       }
 
-      if (tag === 'invalid_access_token' || errorSummary.includes('invalid_access_token') || errorText.includes('invalid_access_token')) {
+      if (
+        tag === 'invalid_access_token' ||
+        tag === 'expired_access_token' ||
+        errorSummary.includes('invalid_access_token') ||
+        errorSummary.includes('expired_access_token') ||
+        errorText.includes('invalid_access_token') ||
+        errorText.includes('expired_access_token')
+      ) {
         throw new Error('El token de Dropbox es inválido o ha caducado. Vuelve a conectar o genera un nuevo token.');
       }
 
