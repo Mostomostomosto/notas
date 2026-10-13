@@ -159,6 +159,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setNewTagName('');
     setNewTagParentId('');
     setIsAddingTag(false);
+    if (token) {
+      scheduleSync(token);
+    }
   };
 
   const handleCreateSubtag = async (
@@ -185,6 +188,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
     setSubtagName('');
     setAddingSubtagForId(null);
+    if (token) {
+      scheduleSync(token);
+    }
   };
 
   const handleMoveTag = async (tagToMove: Tag, newParentId: string | null) => {
@@ -212,6 +218,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         parentId: newParentId,
       });
     }
+    if (token) {
+      scheduleSync(token);
+    }
   };
 
   const handleArchiveTag = async (tagToArchive: Tag) => {
@@ -231,11 +240,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     }
     await db.tags.update(tagToArchive.id, { archived: true });
+    if (token) {
+      scheduleSync(token);
+    }
   };
 
   const handleUnarchiveTag = async (tagToUnarchive: Tag) => {
     setContextMenu(null);
     await db.tags.update(tagToUnarchive.id, { archived: false });
+    if (token) {
+      scheduleSync(token);
+    }
   };
 
   const handleDeleteTag = async (tagToDelete: Tag) => {

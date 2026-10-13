@@ -357,20 +357,9 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 
     // 3. Descargar y reconciliar catálogo de etiquetas
     try {
-      const remoteTags = await dropboxDownloadJson<Tag[]>(activeToken, '/tags.json');
-      if (Array.isArray(remoteTags) && remoteTags.length > 0) {
-        for (const rt of remoteTags) {
-          if (!rt.id || !rt.name) continue;
-          const existing = await db.tags.get(rt.id);
-          if (!existing) {
-            await db.tags.put(rt);
-          } else {
-            await db.tags.put({ ...existing, ...rt });
-          }
-        }
-      }
-    } catch {
-      // Si /tags.json no existe aún en Dropbox, se ignora silenciosamente
+      await syncTags(activeToken);
+    } catch (tagsErr) {
+      console.warn('Aviso al reconciliar etiquetas en pullRemoteNotes:', tagsErr);
     }
   };
 
@@ -402,11 +391,86 @@ export async function pullRemoteNotes(providedToken?: string | null): Promise<vo
 }
 
 /**
+ * Sincroniza el catálogo de etiquetas con Dropbox (/tags.json)
+ * Reconcilia etiquetas locales y remotas preservando la jerarquía de subtags (parentId)
+ */
+export async function syncTags(activeToken: string): Promise<void> {
+  let remoteTags: Tag[] = [];
+  try {
+    const downloaded = await dropboxDownloadJson<Tag[]>(activeToken, '/tags.json');
+    if (Array.isArray(downloaded)) {
+      remoteTags = downloaded;
+    }
+  } catch {
+    // Si /tags.json no existe aún en Dropbox, se inicializa vacío
+  }
+
+  const localTags = await db.tags.toArray();
+
+  if (localTags.length === 0 && remoteTags.length === 0) return;
+
+  // Mapa combinado usando el nombre normalizado (lowercase)
+  const tagMap = new Map<string, Tag>();
+
+  // 1. Incorporar etiquetas remotas primero
+  for (const rt of remoteTags) {
+    if (!rt.name || !rt.id) continue;
+    tagMap.set(rt.name.toLowerCase(), { ...rt });
+  }
+
+  // 2. Incorporar y fusionar con etiquetas locales
+  for (const lt of localTags) {
+    if (!lt.name || !lt.id) continue;
+    const key = lt.name.toLowerCase();
+    const existing = tagMap.get(key);
+    if (!existing) {
+      tagMap.set(key, { ...lt });
+    } else {
+      tagMap.set(key, {
+        ...existing,
+        // Si la local tiene parentId y la remota no, o viceversa, conservar el parentId
+        parentId: lt.parentId || existing.parentId,
+        color: existing.color || lt.color,
+        archived: existing.archived ?? lt.archived ?? false,
+      });
+    }
+  }
+
+  const unifiedTags = Array.from(tagMap.values());
+
+  // 3. Reconciliar la base de datos local Dexie
+  for (const ut of unifiedTags) {
+    // Buscar si existe una etiqueta local con el mismo nombre pero diferente ID (ej: huérfana provisional)
+    const existingByName = await db.tags
+      .filter((t) => t.name.toLowerCase() === ut.name.toLowerCase())
+      .first();
+
+    if (existingByName && existingByName.id !== ut.id) {
+      await db.tags.delete(existingByName.id);
+    }
+    await db.tags.put(ut);
+  }
+
+  // 4. Subir el catálogo unificado resultante a Dropbox
+  try {
+    await dropboxUploadJson(activeToken, '/tags.json', unifiedTags);
+  } catch (err) {
+    console.warn('No se pudo subir catálogo de etiquetas unificado a Dropbox:', err);
+  }
+}
+
+/**
  * Ejecuta una sincronización completa (subida de cambios pendientes y descarga de novedades)
  */
 export async function runFullSync(token?: string | null): Promise<void> {
   const activeToken = token || (await getValidDropboxAccessToken());
   if (!activeToken) return;
+
+  try {
+    await syncTags(activeToken);
+  } catch (err) {
+    console.warn('Aviso en sincronización de etiquetas durante runFullSync:', err);
+  }
 
   try {
     await syncPendingNotes(activeToken);
@@ -471,6 +535,11 @@ export function scheduleSync(token?: string | null): void {
   syncTimeout = window.setTimeout(async () => {
     const activeToken = token || (await getValidDropboxAccessToken());
     if (activeToken) {
+      try {
+        await syncTags(activeToken);
+      } catch (e) {
+        console.warn('Aviso en syncTags debounced:', e);
+      }
       try {
         await syncPendingNotes(activeToken);
       } catch (e) {
