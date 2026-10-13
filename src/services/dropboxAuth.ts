@@ -72,6 +72,10 @@ export function getDropboxRedirectUri(): string {
   return `${window.location.origin}/oauth/dropbox/callback`;
 }
 
+export const DEFAULT_APP_KEY = 'mswncobwm41f07x';
+export const DEFAULT_TOKEN =
+  'sl.u.AGzk4yjtXldLen0Ks2Z9vuk8Vw7g05YyvNU_VluYYEzBLt3RGlB0gIphvoI0rvfY5cyZfXuMtcWx2znT7vcmQn1TylgiGatYtYaYJItc64Q7ueegI0OSMYvXbTDLtv_zNrOm3fr7vrHkieZFRUaZhP2uQw_xUUNtgc5978twyWVd4KUoF4OqZf52o4YiP89xogzX1ZozSLAWFUG7YNoYWr8dfLVHmBsnKXZKnAOqdkqozznNTUC0m4VMRhL11x8DBV3XY38GOK25WFXDQvQE_xIy3P-dJHwbFVbm07ENTgLaXZ3H87PqYMSDsolxvhqlJMW7Un8oU9dm78FEnnAVT_4yKT0Ab7LFicS7b5qgPyk_9NBQlmFh5xzlAqX1RV8NaV9sZoD7Fja1GZqBecNjN0Mr0VBhJdBIjHvoWT6-UpOX8GT1S16ZtEBTFnIaZWjufZCuuOT32tY_vuO4hdD834DRf3PWQ-BZhDLV1PLh5iXKniWTvgsFZRnhDVt5iN4OjuEQVcMcxMra3kOJQ9_u2o5V7ENHUvGB1WRahNQWnByb8X2qQjAmK6yJvBxiDUKZwISLGT9bZqcbqEwnUBNMviKTpjAv9AjKXB2ICos4cC6YrcCEVHQbzj-mwhB6HvCSFKTAbsQfUaQP2mH6xSBOetb255uzfOlcDt1Yo6SJy7V9Wo7fs_tytMBWZ7TQRFLartSZYG208EhmXvXrUMHQfP_GeF1Zj6PVYbrNQUqzLzkUHN1anDWb8_1eVsK1eeNRxG_syaTDKHOsvs2_VAwnohRmIiujxo2OafLCBtUSZAVfX5KDMakbhOGOrjL-F0kmqPrxQOnkeD1J-FFMv5n1OpQJL6iZ8xA3ARG3wA1AL-aiJCL5ZDPf9QqXj0wEIwx26kELWWbHkQcqJk97XhHelSs7MtFBZeFAiSpjPAZAtU3dJdD4gDHAMTyP4QwzbPgftAQ9xUu_UiAcgR_559Q1ZocK6etA4iKHSt8QgzCLUwccGvVMFuKuAgM4LuB1TkOv-PdjwNGZ1B5sP_lAD0-8A_QCWSzRQVYFiit1pnq9I30L3R6gqQX5oXffaXf1X0pMOoeSKLZ7OKW2WL5lHIfeWZmrkuiZP2nQHzGfT_VxFRSw7oQELRkmdLPhrwO0MLesxrx8FN3MB3XEfNxn9FW1p9pAwQVqRKTCIU95Xmy8Ob2h9-_owokh2ASzsm0LRbLjoZPB_d_cud76WOyTLYlUHDabHN9OA-sSHgUos92WjWuFbzzfmxvcOBf5xTeZGLOcer4la5id-MbTpganXl9x0-97cDUKVmRnmJfBREgroaY-TA';
+
 /**
  * Obtiene la App Key configurada (desde localStorage o variable de entorno)
  */
@@ -82,7 +86,7 @@ export function getDropboxAppKey(): string {
   const envKey = (import.meta as any).env?.VITE_DROPBOX_APP_KEY;
   if (envKey && typeof envKey === 'string' && envKey.trim()) return envKey.trim();
 
-  return '';
+  return DEFAULT_APP_KEY;
 }
 
 /**
@@ -309,8 +313,23 @@ export function getDropboxAuthState(): {
   token: string | null;
   user?: DropboxUserProfile;
 } {
+  let token = localStorage.getItem(DROPBOX_STORAGE_KEYS.ACCESS_TOKEN);
+
+  // Si no hay token o es el token anterior antiguo que caducó, inicializar automáticamente con el token activo
+  if (!token || token.startsWith('sl.u.AGyw3vPvRONQRb')) {
+    token = DEFAULT_TOKEN;
+    localStorage.setItem(DROPBOX_STORAGE_KEYS.ACCESS_TOKEN, DEFAULT_TOKEN);
+    localStorage.setItem(DROPBOX_STORAGE_KEYS.IS_LOGGED_IN, 'true');
+    localStorage.setItem(DROPBOX_STORAGE_KEYS.APP_KEY, DEFAULT_APP_KEY);
+    const profile: DropboxUserProfile = {
+      email: 'ionacedo@gmail.com',
+      name: 'Jon Acedo',
+      accountId: 'dbid:AABAij4Q-CPa8xp21ZlF8M5cn9914Bd_Q8s',
+    };
+    localStorage.setItem(DROPBOX_STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
+  }
+
   const isLoggedIn = localStorage.getItem(DROPBOX_STORAGE_KEYS.IS_LOGGED_IN) === 'true';
-  const token = localStorage.getItem(DROPBOX_STORAGE_KEYS.ACCESS_TOKEN);
   const user = getSavedDropboxUserProfile();
 
   return {
