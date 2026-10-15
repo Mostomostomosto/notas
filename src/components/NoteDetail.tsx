@@ -195,6 +195,7 @@ interface ColorPickerPopoverProps {
   onSelectColor: (color: string) => void;
   onClose: () => void;
   isDarkTheme?: boolean;
+  position?: { top: number; left: number };
 }
 
 const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
@@ -202,12 +203,28 @@ const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
   onSelectColor,
   onClose,
   isDarkTheme,
+  position,
 }) => {
   const normActive = (activeColor || '#2B2A28').toUpperCase();
 
+  const containerStyle: React.CSSProperties = position
+    ? {
+        position: 'fixed',
+        top: `${position.top}px`,
+        left: `${position.left}px`,
+        zIndex: 99999,
+      }
+    : {
+        position: 'absolute',
+        top: '100%',
+        left: 0,
+        zIndex: 99999,
+      };
+
   return (
     <div
-      className={`absolute left-0 top-full mt-1.5 p-2 rounded-xl shadow-xl border z-50 min-w-[200px] ${
+      style={containerStyle}
+      className={`color-picker-popover-panel p-2.5 rounded-xl shadow-2xl border min-w-[210px] animate-in fade-in duration-100 ${
         isDarkTheme
           ? 'bg-[#1E1C22] border-neutral-700 text-white shadow-2xl'
           : 'bg-white border-[#E4DECE] text-[#2B2A28]'
@@ -407,6 +424,8 @@ interface RichEditableBlockProps {
   singleLine?: boolean;
   onFocus?: () => void;
   onBlur?: () => void;
+  onMouseUp?: () => void;
+  onKeyUp?: () => void;
   registerRef?: (el: HTMLDivElement | null) => void;
 }
 
@@ -420,6 +439,8 @@ const RichEditableBlock: React.FC<RichEditableBlockProps> = ({
   singleLine,
   onFocus,
   onBlur,
+  onMouseUp,
+  onKeyUp,
   registerRef,
 }) => {
   const editableRef = useRef<HTMLDivElement | null>(null);
@@ -497,6 +518,8 @@ const RichEditableBlock: React.FC<RichEditableBlockProps> = ({
       onPaste={handlePaste}
       onFocus={onFocus}
       onBlur={onBlur}
+      onMouseUp={onMouseUp}
+      onKeyUp={onKeyUp}
       className={`rich-editable ${className || ''}`}
     />
   );
@@ -526,6 +549,20 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isMdColorOpen, setIsMdColorOpen] = useState(false);
   const [mdActiveColor, setMdActiveColor] = useState('#3F6E64');
+  const mdColorBtnRef = useRef<HTMLButtonElement>(null);
+  const [mdColorPos, setMdColorPos] = useState({ top: 0, left: 0 });
+
+  const handleToggleMdColor = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!isMdColorOpen && mdColorBtnRef.current) {
+      const rect = mdColorBtnRef.current.getBoundingClientRect();
+      setMdColorPos({
+        top: rect.bottom + 6,
+        left: Math.max(12, Math.min(window.innerWidth - 230, rect.left)),
+      });
+    }
+    setIsMdColorOpen((prev) => !prev);
+  };
 
   const handleMdFormat = (fmt: 'bold' | 'italic' | 'color' | 'clear', color?: string) => {
     if (!textareaRef.current) return;
@@ -600,9 +637,10 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
                 </button>
                 <div className="relative color-picker-popover-container">
                   <button
+                    ref={mdColorBtnRef}
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => setIsMdColorOpen(!isMdColorOpen)}
+                    onClick={handleToggleMdColor}
                     className="flex items-center gap-0.5 p-1 rounded hover:bg-white transition-colors cursor-pointer"
                     title="Color de texto"
                   >
@@ -622,6 +660,7 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
                         handleMdFormat('color', c);
                       }}
                       onClose={() => setIsMdColorOpen(false)}
+                      position={mdColorPos}
                     />
                   )}
                 </div>
@@ -1232,6 +1271,11 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const [activeColor, setActiveColor] = useState('#2B2A28');
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isBubbleColorOpen, setIsBubbleColorOpen] = useState(false);
+  const [colorPickerPos, setColorPickerPos] = useState({ top: 0, left: 0 });
+  const [bubbleColorPos, setBubbleColorPos] = useState({ top: 0, left: 0 });
+  const colorButtonRef = useRef<HTMLButtonElement>(null);
+  const bubbleColorBtnRef = useRef<HTMLButtonElement>(null);
+
   const [floatingBubble, setFloatingBubble] = useState<{
     visible: boolean;
     top: number;
@@ -1244,6 +1288,62 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     element?: HTMLElement | null;
     textarea?: HTMLTextAreaElement | null;
   } | null>(null);
+
+  const savedRangeRef = useRef<Range | null>(null);
+
+  const saveCurrentSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const anchor = sel.anchorNode;
+    if (!anchor) return;
+    if (noteEditorRef.current && noteEditorRef.current.contains(anchor)) {
+      try {
+        savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+      } catch (_) {}
+    }
+  };
+
+  const restoreSavedRange = (targetEl?: HTMLElement | null) => {
+    const saved = savedRangeRef.current;
+    if (targetEl) {
+      try {
+        targetEl.focus();
+      } catch (_) {}
+    }
+    if (saved) {
+      try {
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(saved);
+        }
+      } catch (_) {}
+    }
+  };
+
+  const handleToggleColorPicker = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!isColorPickerOpen && colorButtonRef.current) {
+      const rect = colorButtonRef.current.getBoundingClientRect();
+      setColorPickerPos({
+        top: rect.bottom + 6,
+        left: Math.max(12, Math.min(window.innerWidth - 230, rect.left)),
+      });
+    }
+    setIsColorPickerOpen((prev) => !prev);
+  };
+
+  const handleToggleBubbleColor = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!isBubbleColorOpen && bubbleColorBtnRef.current) {
+      const rect = bubbleColorBtnRef.current.getBoundingClientRect();
+      setBubbleColorPos({
+        top: rect.bottom + 6,
+        left: Math.max(12, Math.min(window.innerWidth - 230, rect.left)),
+      });
+    }
+    setIsBubbleColorOpen((prev) => !prev);
+  };
 
   const blockElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const noteEditorRef = useRef<HTMLDivElement>(null);
@@ -1769,20 +1869,35 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (activeTargetRef.current?.element && document.body.contains(activeTargetRef.current.element)) {
       return activeTargetRef.current;
     }
+    if (activeTargetRef.current?.textarea && document.body.contains(activeTargetRef.current.textarea)) {
+      return activeTargetRef.current;
+    }
     const sel = window.getSelection();
     if (sel && sel.anchorNode) {
       let node: Node | null = sel.anchorNode;
       while (node) {
         if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
           const blockId = node.getAttribute('data-block-id')!;
+          const el = blockElementsRef.current.get(blockId) || (node as HTMLElement);
           activeTargetRef.current = {
             type: 'rich',
             blockId,
-            element: node,
+            element: el,
           };
           return activeTargetRef.current;
         }
         node = node.parentNode;
+      }
+    }
+    if (localNote && localNote.blocks.length > 0) {
+      for (const b of localNote.blocks) {
+        if (b.type === 'text' || b.type === 'heading') {
+          const el = blockElementsRef.current.get(b.id);
+          if (el) {
+            activeTargetRef.current = { type: 'rich', blockId: b.id, element: el };
+            return activeTargetRef.current;
+          }
+        }
       }
     }
     return activeTargetRef.current;
@@ -1793,16 +1908,23 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (target?.type === 'markdown' && target.textarea) {
       const newVal = applyMarkdownFormat(target.textarea, 'bold');
       handleUpdateBlockContent(target.blockId, newVal);
-    } else {
-      try {
-        document.execCommand('styleWithCSS', false, 'true');
-      } catch (_) {}
-      document.execCommand('bold', false);
-      const isBold = document.queryCommandState('bold');
-      setIsBoldActive(isBold);
-      if (target?.element) {
-        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
-      }
+      return;
+    }
+
+    if (target?.element) {
+      target.element.focus();
+      restoreSavedRange(target.element);
+    }
+
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+    } catch (_) {}
+    document.execCommand('bold', false);
+    setIsBoldActive(document.queryCommandState('bold'));
+
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && target?.element) {
+      handleUpdateBlockContent(target.blockId, target.element.innerHTML);
     }
   };
 
@@ -1811,16 +1933,23 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (target?.type === 'markdown' && target.textarea) {
       const newVal = applyMarkdownFormat(target.textarea, 'italic');
       handleUpdateBlockContent(target.blockId, newVal);
-    } else {
-      try {
-        document.execCommand('styleWithCSS', false, 'true');
-      } catch (_) {}
-      document.execCommand('italic', false);
-      const isItalic = document.queryCommandState('italic');
-      setIsItalicActive(isItalic);
-      if (target?.element) {
-        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
-      }
+      return;
+    }
+
+    if (target?.element) {
+      target.element.focus();
+      restoreSavedRange(target.element);
+    }
+
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+    } catch (_) {}
+    document.execCommand('italic', false);
+    setIsItalicActive(document.queryCommandState('italic'));
+
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && target?.element) {
+      handleUpdateBlockContent(target.blockId, target.element.innerHTML);
     }
   };
 
@@ -1833,14 +1962,22 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (target?.type === 'markdown' && target.textarea) {
       const newVal = applyMarkdownFormat(target.textarea, 'color', colorHex);
       handleUpdateBlockContent(target.blockId, newVal);
-    } else {
-      try {
-        document.execCommand('styleWithCSS', false, 'true');
-      } catch (_) {}
-      document.execCommand('foreColor', false, colorHex);
-      if (target?.element) {
-        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
-      }
+      return;
+    }
+
+    if (target?.element) {
+      target.element.focus();
+      restoreSavedRange(target.element);
+    }
+
+    try {
+      document.execCommand('styleWithCSS', false, 'true');
+    } catch (_) {}
+    document.execCommand('foreColor', false, colorHex);
+
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && target?.element) {
+      handleUpdateBlockContent(target.blockId, target.element.innerHTML);
     }
   };
 
@@ -1853,24 +1990,63 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (target?.type === 'markdown' && target.textarea) {
       const newVal = applyMarkdownFormat(target.textarea, 'clear');
       handleUpdateBlockContent(target.blockId, newVal);
-    } else {
-      document.execCommand('removeFormat', false);
-      document.execCommand('foreColor', false, '#2B2A28');
-      setIsBoldActive(false);
-      setIsItalicActive(false);
-      if (target?.element) {
-        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
-      }
+      return;
+    }
+
+    if (target?.element) {
+      target.element.focus();
+      restoreSavedRange(target.element);
+    }
+
+    document.execCommand('removeFormat', false);
+    document.execCommand('foreColor', false, '#2B2A28');
+    setIsBoldActive(false);
+    setIsItalicActive(false);
+
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && target?.element) {
+      handleUpdateBlockContent(target.blockId, target.element.innerHTML);
     }
   };
 
   // Escucha global de cambio de selección para barra flotante e indicadores de formato
   useEffect(() => {
     const handleSelectionChange = () => {
+      saveCurrentSelection();
       updateActiveFormats();
 
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+      if (!sel) return;
+
+      const container = noteEditorRef.current;
+      let node: Node | null = sel.anchorNode;
+      if (container && node && container.contains(node)) {
+        while (node && node !== container) {
+          if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
+            const blockId = node.getAttribute('data-block-id')!;
+            const block = localNote?.blocks?.find((b) => b.id === blockId);
+            if (block) {
+              if (block.type === 'heading' || block.type === 'text') {
+                activeTargetRef.current = {
+                  type: 'rich',
+                  blockId,
+                  element: blockElementsRef.current.get(blockId) || (node as HTMLElement),
+                };
+              } else if (block.type === 'markdown') {
+                activeTargetRef.current = {
+                  type: 'markdown',
+                  blockId,
+                  textarea: activeTargetRef.current?.textarea || null,
+                };
+              }
+            }
+            break;
+          }
+          node = node.parentNode;
+        }
+      }
+
+      if (sel.isCollapsed || sel.rangeCount === 0) {
         setFloatingBubble((prev) => (prev.visible ? { ...prev, visible: false } : prev));
         setIsBubbleColorOpen(false);
         return;
@@ -1884,40 +2060,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       }
 
       const range = sel.getRangeAt(0);
-      const container = noteEditorRef.current;
       if (!container || !container.contains(range.commonAncestorContainer)) {
         setFloatingBubble((prev) => (prev.visible ? { ...prev, visible: false } : prev));
         setIsBubbleColorOpen(false);
         return;
-      }
-
-      let node: Node | null = range.commonAncestorContainer;
-      let blockId: string | null = null;
-      while (node && node !== container) {
-        if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
-          blockId = node.getAttribute('data-block-id');
-          break;
-        }
-        node = node.parentNode;
-      }
-
-      if (blockId) {
-        const block = localNote?.blocks?.find((b) => b.id === blockId);
-        if (block) {
-          if (block.type === 'heading' || block.type === 'text') {
-            activeTargetRef.current = {
-              type: 'rich',
-              blockId,
-              element: blockElementsRef.current.get(blockId) || null,
-            };
-          } else if (block.type === 'markdown') {
-            activeTargetRef.current = {
-              type: 'markdown',
-              blockId,
-              textarea: activeTargetRef.current?.textarea || null,
-            };
-          }
-        }
       }
 
       const rect = range.getBoundingClientRect();
@@ -1939,8 +2085,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     };
 
     document.addEventListener('selectionchange', handleSelectionChange);
+    document.addEventListener('mouseup', handleSelectionChange);
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
+      document.removeEventListener('mouseup', handleSelectionChange);
     };
   }, [localNote?.blocks]);
 
@@ -1949,7 +2097,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     if (!isColorPickerOpen && !isBubbleColorOpen) return;
     const handlePointerDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest('.color-picker-popover-container')) {
+      if (
+        !target.closest('.color-picker-popover-container') &&
+        !target.closest('.color-picker-popover-panel')
+      ) {
         setIsColorPickerOpen(false);
         setIsBubbleColorOpen(false);
       }
@@ -2684,7 +2835,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
       {/* Block Toolbar */}
       {!localNote.deleted && (
-        <div className="px-4 sm:px-8 py-2 bg-[#F7F4EE]/60 border-b border-[#E4DECE] flex items-center justify-between gap-2 overflow-x-auto">
+        <div className="px-4 sm:px-8 py-2 bg-[#F7F4EE]/60 border-b border-[#E4DECE] flex items-center justify-between gap-2 overflow-visible relative z-30">
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
               onClick={() => handleAddBlock('heading')}
@@ -2785,9 +2936,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             {/* Color de texto dropdown */}
             <div className="relative color-picker-popover-container">
               <button
+                ref={colorButtonRef}
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
+                onClick={handleToggleColorPicker}
                 className="flex items-center gap-0.5 p-1 rounded-md hover:bg-[#F7F4EE] transition-all cursor-pointer"
                 title="Color de texto"
               >
@@ -2806,6 +2958,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   activeColor={activeColor}
                   onSelectColor={handleApplyColor}
                   onClose={() => setIsColorPickerOpen(false)}
+                  position={colorPickerPos}
                 />
               )}
             </div>
@@ -2951,6 +3104,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                     };
                     updateActiveFormats();
                   }}
+                  onMouseUp={() => {
+                    saveCurrentSelection();
+                    updateActiveFormats();
+                  }}
+                  onKeyUp={() => {
+                    saveCurrentSelection();
+                    updateActiveFormats();
+                  }}
                   registerRef={(el) => {
                     if (el) {
                       blockElementsRef.current.set(block.id, el);
@@ -2958,7 +3119,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                       blockElementsRef.current.delete(block.id);
                     }
                   }}
-                  className="w-full text-lg font-bold text-[#2B2A28] outline-none bg-transparent placeholder-[#8A8478]/40 border-b border-transparent focus:border-[#E4DECE]"
+                  className="w-full text-lg font-semibold text-[#2B2A28] outline-none bg-transparent placeholder-[#8A8478]/40 border-b border-transparent focus:border-[#E4DECE]"
                 />
               )}
 
@@ -2976,6 +3137,14 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                       blockId: block.id,
                       element: blockElementsRef.current.get(block.id) || null,
                     };
+                    updateActiveFormats();
+                  }}
+                  onMouseUp={() => {
+                    saveCurrentSelection();
+                    updateActiveFormats();
+                  }}
+                  onKeyUp={() => {
+                    saveCurrentSelection();
                     updateActiveFormats();
                   }}
                   registerRef={(el) => {
@@ -3607,9 +3776,10 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
           {/* Bubble Color Dropdown */}
           <div className="relative color-picker-popover-container">
             <button
+              ref={bubbleColorBtnRef}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setIsBubbleColorOpen(!isBubbleColorOpen)}
+              onClick={handleToggleBubbleColor}
               className="flex items-center gap-0.5 p-1 rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
               title="Color de texto"
             >
@@ -3629,6 +3799,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 onSelectColor={handleApplyColor}
                 onClose={() => setIsBubbleColorOpen(false)}
                 isDarkTheme={true}
+                position={bubbleColorPos}
               />
             )}
           </div>

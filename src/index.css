@@ -232,8 +232,9 @@ body {
 }
 
 .rich-editable b,
-.rich-editable strong {
-  font-weight: 700;
+.rich-editable strong,
+.rich-editable [style*="bold"] {
+  font-weight: 800;
   color: inherit;
 }
 
