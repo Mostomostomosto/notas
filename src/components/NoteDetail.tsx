@@ -39,6 +39,11 @@ import {
   Images,
   ChevronLeft,
   ChevronRight,
+  Bold,
+  Italic,
+  Baseline,
+  ChevronDown,
+  RemoveFormatting,
 } from 'lucide-react';
 import { marked } from 'marked';
 
@@ -76,12 +81,227 @@ interface ColumnsModalState {
   columns: ColumnItem[];
 }
 
+export const FORMAT_COLORS = [
+  { name: 'Predeterminado', color: '#2B2A28' },
+  { name: 'Pino Bitácora', color: '#3F6E64' },
+  { name: 'Terracota', color: '#B4553F' },
+  { name: 'Ámbar Cálido', color: '#C98A3D' },
+  { name: 'Azul Zafiro', color: '#2563EB' },
+  { name: 'Púrpura', color: '#7A68A6' },
+  { name: 'Verde Hoja', color: '#2E7D32' },
+  { name: 'Gris Neutro', color: '#8A8478' },
+];
+
+export function rgbToHex(rgbStr: string): string {
+  if (!rgbStr) return '#2B2A28';
+  if (rgbStr.startsWith('#')) return rgbStr.toUpperCase();
+  const match = rgbStr.match(/\d+/g);
+  if (match && match.length >= 3) {
+    const r = parseInt(match[0], 10).toString(16).padStart(2, '0');
+    const g = parseInt(match[1], 10).toString(16).padStart(2, '0');
+    const b = parseInt(match[2], 10).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`.toUpperCase();
+  }
+  return rgbStr;
+}
+
+export function convertLegacyMarkdownToHtml(text: string): string {
+  if (!text) return '';
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.+?)\*/g, '<i>$1</i>');
+}
+
+export function applyMarkdownFormat(
+  textarea: HTMLTextAreaElement,
+  format: 'bold' | 'italic' | 'color' | 'clear',
+  colorHex?: string
+): string {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  const selectedText = val.substring(start, end);
+
+  let replacement = '';
+  let newCursorStart = start;
+  let newCursorEnd = end;
+
+  if (format === 'bold') {
+    if (selectedText.startsWith('**') && selectedText.endsWith('**') && selectedText.length >= 4) {
+      replacement = selectedText.slice(2, -2);
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    } else if (selectedText.length > 0) {
+      replacement = `**${selectedText}**`;
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    } else {
+      replacement = '****';
+      newCursorStart = start + 2;
+      newCursorEnd = start + 2;
+    }
+  } else if (format === 'italic') {
+    if (
+      selectedText.startsWith('*') &&
+      selectedText.endsWith('*') &&
+      selectedText.length >= 2 &&
+      !selectedText.startsWith('**')
+    ) {
+      replacement = selectedText.slice(1, -1);
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    } else if (selectedText.length > 0) {
+      replacement = `*${selectedText}*`;
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    } else {
+      replacement = '**';
+      newCursorStart = start + 1;
+      newCursorEnd = start + 1;
+    }
+  } else if (format === 'color') {
+    const hex = colorHex || '#3F6E64';
+    if (selectedText.length > 0) {
+      replacement = `<span style="color: ${hex}">${selectedText}</span>`;
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    } else {
+      replacement = `<span style="color: ${hex}"></span>`;
+      newCursorStart = start + `<span style="color: ${hex}">`.length;
+      newCursorEnd = newCursorStart;
+    }
+  } else if (format === 'clear') {
+    if (selectedText.length > 0) {
+      replacement = selectedText
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/<span style="color:\s*[^"]+">([\s\S]*?)<\/span>/gi, '$1');
+      newCursorStart = start;
+      newCursorEnd = start + replacement.length;
+    }
+  }
+
+  const nextValue = val.substring(0, start) + replacement + val.substring(end);
+  textarea.value = nextValue;
+  textarea.focus();
+  textarea.setSelectionRange(newCursorStart, newCursorEnd);
+
+  return nextValue;
+}
+
+interface ColorPickerPopoverProps {
+  activeColor: string;
+  onSelectColor: (color: string) => void;
+  onClose: () => void;
+  isDarkTheme?: boolean;
+}
+
+const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
+  activeColor,
+  onSelectColor,
+  onClose,
+  isDarkTheme,
+}) => {
+  const normActive = (activeColor || '#2B2A28').toUpperCase();
+
+  return (
+    <div
+      className={`absolute left-0 top-full mt-1.5 p-2 rounded-xl shadow-xl border z-50 min-w-[200px] ${
+        isDarkTheme
+          ? 'bg-[#1E1C22] border-neutral-700 text-white shadow-2xl'
+          : 'bg-white border-[#E4DECE] text-[#2B2A28]'
+      }`}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      <div
+        className={`text-[10.5px] font-semibold uppercase tracking-wider mb-2 px-1 ${
+          isDarkTheme ? 'text-neutral-400' : 'text-[#8A8478]'
+        }`}
+      >
+        Color de texto
+      </div>
+
+      <div className="grid grid-cols-4 gap-1.5 mb-2.5">
+        {FORMAT_COLORS.map((item) => {
+          const isSelected = normActive === item.color.toUpperCase();
+          return (
+            <button
+              key={item.color}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSelectColor(item.color);
+                onClose();
+              }}
+              className="relative w-8 h-8 rounded-lg flex items-center justify-center transition-transform hover:scale-110 cursor-pointer border border-[#E4DECE]/40 shadow-2xs"
+              style={{ backgroundColor: item.color }}
+              title={item.name}
+            >
+              {isSelected && (
+                <Check
+                  className={`w-3.5 h-3.5 stroke-[3] ${
+                    item.color === '#FAF8F5' || item.color === '#FFFFFF'
+                      ? 'text-black'
+                      : 'text-white'
+                  }`}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className={`h-[1px] my-1.5 ${isDarkTheme ? 'bg-neutral-800' : 'bg-[#E4DECE]'}`} />
+
+      <div className="flex items-center justify-between gap-1 text-[11px] pt-0.5">
+        <label
+          onMouseDown={(e) => e.preventDefault()}
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors ${
+            isDarkTheme ? 'hover:bg-neutral-800 text-neutral-300' : 'hover:bg-[#F7F4EE] text-[#2B2A28]'
+          }`}
+          title="Seleccionar cualquier color"
+        >
+          <input
+            type="color"
+            value={activeColor && activeColor.startsWith('#') ? activeColor : '#3F6E64'}
+            onChange={(e) => {
+              onSelectColor(e.target.value);
+            }}
+            className="w-4 h-4 rounded border-0 p-0 cursor-pointer bg-transparent"
+          />
+          <span className="font-medium">Personalizado</span>
+        </label>
+
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onSelectColor('#2B2A28');
+            onClose();
+          }}
+          className={`px-2 py-1 rounded-md text-[10.5px] transition-colors cursor-pointer font-medium ${
+            isDarkTheme ? 'hover:bg-neutral-800 text-neutral-400' : 'hover:bg-[#F7F4EE] text-[#8A8478]'
+          }`}
+          title="Restablecer color predeterminado"
+        >
+          Defecto
+        </button>
+      </div>
+    </div>
+  );
+};
+
 interface AutoResizeTextBlockProps {
   value: string;
   disabled?: boolean;
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
+  onFocus?: () => void;
+  onBlur?: () => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
 const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
@@ -90,11 +310,17 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   onChange,
   placeholder,
   className,
+  textareaRef: externalRef,
+  onFocus,
+  onBlur,
+  onKeyDown,
 }) => {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const localRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const getElement = () => externalRef?.current || localRef.current;
 
   const adjustHeight = () => {
-    const textarea = textareaRef.current;
+    const textarea = getElement();
     if (!textarea) return;
 
     const scrollContainer = textarea.closest('.overflow-y-auto') as HTMLElement | null;
@@ -121,7 +347,7 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   }, []);
 
   useEffect(() => {
-    const textarea = textareaRef.current;
+    const textarea = getElement();
     if (!textarea || typeof ResizeObserver === 'undefined') return;
 
     let lastWidth = textarea.clientWidth;
@@ -144,7 +370,12 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
 
   return (
     <textarea
-      ref={textareaRef}
+      ref={(el) => {
+        localRef.current = el;
+        if (externalRef && 'current' in externalRef) {
+          (externalRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el;
+        }
+      }}
       value={value}
       disabled={disabled}
       onChange={(e) => {
@@ -152,6 +383,9 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
         adjustHeight();
       }}
       onInput={() => adjustHeight()}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
       placeholder={placeholder}
       className={className}
       style={{
@@ -163,11 +397,121 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   );
 };
 
+interface RichEditableBlockProps {
+  blockId: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  singleLine?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
+  registerRef?: (el: HTMLDivElement | null) => void;
+}
+
+const RichEditableBlock: React.FC<RichEditableBlockProps> = ({
+  blockId,
+  value,
+  disabled,
+  onChange,
+  placeholder,
+  className,
+  singleLine,
+  onFocus,
+  onBlur,
+  registerRef,
+}) => {
+  const editableRef = useRef<HTMLDivElement | null>(null);
+  const lastHtmlRef = useRef<string>('');
+
+  useLayoutEffect(() => {
+    const el = editableRef.current;
+    if (!el) return;
+    const initial = convertLegacyMarkdownToHtml(value || '');
+    el.innerHTML = initial;
+    lastHtmlRef.current = initial;
+  }, []);
+
+  useEffect(() => {
+    const el = editableRef.current;
+    if (!el) return;
+
+    const normalizedValue = convertLegacyMarkdownToHtml(value || '');
+    if (el.innerHTML !== normalizedValue && normalizedValue !== lastHtmlRef.current) {
+      el.innerHTML = normalizedValue;
+      lastHtmlRef.current = normalizedValue;
+    }
+  }, [value]);
+
+  const handleInput = () => {
+    const el = editableRef.current;
+    if (!el) return;
+
+    let html = el.innerHTML;
+    const cleanText = el.innerText.trim();
+    if (
+      !cleanText &&
+      (!html || html === '<br>' || html === '<div><br></div>' || html === '<p><br></p>')
+    ) {
+      html = '';
+    }
+    lastHtmlRef.current = html;
+    onChange(html);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (singleLine && e.key === 'Enter') {
+      e.preventDefault();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    if (text) {
+      document.execCommand('insertText', false, text);
+      handleInput();
+    }
+  };
+
+  const isEmpty = React.useMemo(() => {
+    if (!value) return true;
+    const clean = value.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    return clean.length === 0;
+  }, [value]);
+
+  return (
+    <div
+      ref={(el) => {
+        editableRef.current = el;
+        registerRef?.(el);
+      }}
+      contentEditable={!disabled}
+      suppressContentEditableWarning={true}
+      data-block-id={blockId}
+      data-placeholder={placeholder}
+      data-empty={isEmpty ? 'true' : 'false'}
+      onInput={handleInput}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      className={`rich-editable ${className || ''}`}
+    />
+  );
+};
+
 interface MarkdownBlockItemProps {
   block: MarkdownBlock;
   disabled?: boolean;
   onUpdateContent: (newContent: string) => void;
   onReplaceFile: (newContent: string, fileName?: string) => void;
+  onSetActiveTarget?: (target: {
+    type: 'markdown';
+    blockId: string;
+    textarea: HTMLTextAreaElement | null;
+  }) => void;
 }
 
 const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
@@ -175,9 +519,19 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   disabled,
   onUpdateContent,
   onReplaceFile,
+  onSetActiveTarget,
 }) => {
   const [isEditing, setIsEditing] = useState(() => !block.content);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [isMdColorOpen, setIsMdColorOpen] = useState(false);
+  const [mdActiveColor, setMdActiveColor] = useState('#3F6E64');
+
+  const handleMdFormat = (fmt: 'bold' | 'italic' | 'color' | 'clear', color?: string) => {
+    if (!textareaRef.current) return;
+    const nextVal = applyMarkdownFormat(textareaRef.current, fmt, color);
+    onUpdateContent(nextVal);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -223,6 +577,57 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
 
         {!disabled && (
           <div className="flex items-center gap-1 shrink-0">
+            {/* Si está editando, mostramos barra de herramientas rápida de formato */}
+            {isEditing && (
+              <div className="flex items-center gap-0.5 border-r border-[#E4DECE] pr-1.5 mr-0.5">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleMdFormat('bold')}
+                  className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
+                  title="Negrita (**)"
+                >
+                  <Bold className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleMdFormat('italic')}
+                  className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
+                  title="Cursiva (*)"
+                >
+                  <Italic className="w-3 h-3" />
+                </button>
+                <div className="relative color-picker-popover-container">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setIsMdColorOpen(!isMdColorOpen)}
+                    className="flex items-center gap-0.5 p-1 rounded hover:bg-white transition-colors cursor-pointer"
+                    title="Color de texto"
+                  >
+                    <div className="flex flex-col items-center">
+                      <Baseline className="w-3 h-3 text-[#2B2A28]" />
+                      <span
+                        className="w-3 h-[2px] rounded-full mt-[-1px]"
+                        style={{ backgroundColor: mdActiveColor }}
+                      />
+                    </div>
+                  </button>
+                  {isMdColorOpen && (
+                    <ColorPickerPopover
+                      activeColor={mdActiveColor}
+                      onSelectColor={(c) => {
+                        setMdActiveColor(c);
+                        handleMdFormat('color', c);
+                      }}
+                      onClose={() => setIsMdColorOpen(false)}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -270,9 +675,26 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
         {isEditing ? (
           <div>
             <AutoResizeTextBlock
+              textareaRef={textareaRef}
               value={block.content}
               disabled={disabled}
               onChange={onUpdateContent}
+              onFocus={() => {
+                onSetActiveTarget?.({
+                  type: 'markdown',
+                  blockId: block.id,
+                  textarea: textareaRef.current,
+                });
+              }}
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+                  e.preventDefault();
+                  handleMdFormat('bold');
+                } else if ((e.ctrlKey || e.metaKey) && (e.key === 'i' || e.key === 'I')) {
+                  e.preventDefault();
+                  handleMdFormat('italic');
+                }
+              }}
               placeholder="# Escribe aquí en Markdown...&#10;**Negrita**, *cursiva*, listas con - o 1., tablas, etc."
               className="w-full text-xs font-mono leading-relaxed text-[#2B2A28] outline-none bg-transparent resize-none placeholder-[#8A8478]/40"
             />
@@ -804,6 +1226,28 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const pendingSaveRef = useRef<Note | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
+  // Estados para formato enriquecido de texto (Word style: Negrita, Cursiva, Color)
+  const [isBoldActive, setIsBoldActive] = useState(false);
+  const [isItalicActive, setIsItalicActive] = useState(false);
+  const [activeColor, setActiveColor] = useState('#2B2A28');
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
+  const [isBubbleColorOpen, setIsBubbleColorOpen] = useState(false);
+  const [floatingBubble, setFloatingBubble] = useState<{
+    visible: boolean;
+    top: number;
+    left: number;
+  }>({ visible: false, top: 0, left: 0 });
+
+  const activeTargetRef = useRef<{
+    type: 'rich' | 'markdown';
+    blockId: string;
+    element?: HTMLElement | null;
+    textarea?: HTMLTextAreaElement | null;
+  } | null>(null);
+
+  const blockElementsRef = useRef<Map<string, HTMLElement>>(new Map());
+  const noteEditorRef = useRef<HTMLDivElement>(null);
+
   // Sincronizar si cambia la nota seleccionada o si llega una actualización externa
   useEffect(() => {
     if (note) {
@@ -1307,6 +1751,214 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     };
     saveChangesImmediate(updated);
   };
+
+  // Actualizar estado activo de Negrita, Cursiva y Color según selección o cursor actual
+  const updateActiveFormats = () => {
+    try {
+      setIsBoldActive(document.queryCommandState('bold'));
+      setIsItalicActive(document.queryCommandState('italic'));
+      const val = document.queryCommandValue('foreColor');
+      if (val) {
+        const hex = rgbToHex(val);
+        if (hex) setActiveColor(hex);
+      }
+    } catch (_) {}
+  };
+
+  const resolveActiveTarget = () => {
+    if (activeTargetRef.current?.element && document.body.contains(activeTargetRef.current.element)) {
+      return activeTargetRef.current;
+    }
+    const sel = window.getSelection();
+    if (sel && sel.anchorNode) {
+      let node: Node | null = sel.anchorNode;
+      while (node) {
+        if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
+          const blockId = node.getAttribute('data-block-id')!;
+          activeTargetRef.current = {
+            type: 'rich',
+            blockId,
+            element: node,
+          };
+          return activeTargetRef.current;
+        }
+        node = node.parentNode;
+      }
+    }
+    return activeTargetRef.current;
+  };
+
+  const handleToggleBold = () => {
+    const target = resolveActiveTarget();
+    if (target?.type === 'markdown' && target.textarea) {
+      const newVal = applyMarkdownFormat(target.textarea, 'bold');
+      handleUpdateBlockContent(target.blockId, newVal);
+    } else {
+      try {
+        document.execCommand('styleWithCSS', false, 'true');
+      } catch (_) {}
+      document.execCommand('bold', false);
+      const isBold = document.queryCommandState('bold');
+      setIsBoldActive(isBold);
+      if (target?.element) {
+        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
+      }
+    }
+  };
+
+  const handleToggleItalic = () => {
+    const target = resolveActiveTarget();
+    if (target?.type === 'markdown' && target.textarea) {
+      const newVal = applyMarkdownFormat(target.textarea, 'italic');
+      handleUpdateBlockContent(target.blockId, newVal);
+    } else {
+      try {
+        document.execCommand('styleWithCSS', false, 'true');
+      } catch (_) {}
+      document.execCommand('italic', false);
+      const isItalic = document.queryCommandState('italic');
+      setIsItalicActive(isItalic);
+      if (target?.element) {
+        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
+      }
+    }
+  };
+
+  const handleApplyColor = (colorHex: string) => {
+    setActiveColor(colorHex);
+    setIsColorPickerOpen(false);
+    setIsBubbleColorOpen(false);
+
+    const target = resolveActiveTarget();
+    if (target?.type === 'markdown' && target.textarea) {
+      const newVal = applyMarkdownFormat(target.textarea, 'color', colorHex);
+      handleUpdateBlockContent(target.blockId, newVal);
+    } else {
+      try {
+        document.execCommand('styleWithCSS', false, 'true');
+      } catch (_) {}
+      document.execCommand('foreColor', false, colorHex);
+      if (target?.element) {
+        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
+      }
+    }
+  };
+
+  const handleClearFormat = () => {
+    setActiveColor('#2B2A28');
+    setIsColorPickerOpen(false);
+    setIsBubbleColorOpen(false);
+
+    const target = resolveActiveTarget();
+    if (target?.type === 'markdown' && target.textarea) {
+      const newVal = applyMarkdownFormat(target.textarea, 'clear');
+      handleUpdateBlockContent(target.blockId, newVal);
+    } else {
+      document.execCommand('removeFormat', false);
+      document.execCommand('foreColor', false, '#2B2A28');
+      setIsBoldActive(false);
+      setIsItalicActive(false);
+      if (target?.element) {
+        handleUpdateBlockContent(target.blockId, target.element.innerHTML);
+      }
+    }
+  };
+
+  // Escucha global de cambio de selección para barra flotante e indicadores de formato
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      updateActiveFormats();
+
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        setFloatingBubble((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+        setIsBubbleColorOpen(false);
+        return;
+      }
+
+      const selectedText = sel.toString().trim();
+      if (!selectedText) {
+        setFloatingBubble((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+        setIsBubbleColorOpen(false);
+        return;
+      }
+
+      const range = sel.getRangeAt(0);
+      const container = noteEditorRef.current;
+      if (!container || !container.contains(range.commonAncestorContainer)) {
+        setFloatingBubble((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+        setIsBubbleColorOpen(false);
+        return;
+      }
+
+      let node: Node | null = range.commonAncestorContainer;
+      let blockId: string | null = null;
+      while (node && node !== container) {
+        if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
+          blockId = node.getAttribute('data-block-id');
+          break;
+        }
+        node = node.parentNode;
+      }
+
+      if (blockId) {
+        const block = localNote?.blocks?.find((b) => b.id === blockId);
+        if (block) {
+          if (block.type === 'heading' || block.type === 'text') {
+            activeTargetRef.current = {
+              type: 'rich',
+              blockId,
+              element: blockElementsRef.current.get(blockId) || null,
+            };
+          } else if (block.type === 'markdown') {
+            activeTargetRef.current = {
+              type: 'markdown',
+              blockId,
+              textarea: activeTargetRef.current?.textarea || null,
+            };
+          }
+        }
+      }
+
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        return;
+      }
+
+      const bubbleTop = Math.max(12, rect.top - 8);
+      const bubbleLeft = Math.min(
+        window.innerWidth - 130,
+        Math.max(130, rect.left + rect.width / 2)
+      );
+
+      setFloatingBubble({
+        visible: true,
+        top: bubbleTop,
+        left: bubbleLeft,
+      });
+    };
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, [localNote?.blocks]);
+
+  // Cerrar popover de color al hacer clic fuera
+  useEffect(() => {
+    if (!isColorPickerOpen && !isBubbleColorOpen) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.color-picker-popover-container')) {
+        setIsColorPickerOpen(false);
+        setIsBubbleColorOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isColorPickerOpen, isBubbleColorOpen]);
 
   const handleMarkdownFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2098,6 +2750,77 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             </button>
           </div>
 
+          {/* Format Toolbar (Negrita, Cursiva, Color de texto, Quitar formato) */}
+          <div className="flex items-center gap-0.5 bg-white/80 border border-[#E4DECE] rounded-lg p-0.5 shadow-2xs flex-shrink-0">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleToggleBold}
+              className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                isBoldActive
+                  ? 'bg-[#3F6E64] text-white shadow-2xs'
+                  : 'text-[#2B2A28] hover:bg-[#F7F4EE]'
+              }`}
+              title="Negrita (Ctrl+B)"
+            >
+              <Bold className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleToggleItalic}
+              className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                isItalicActive
+                  ? 'bg-[#3F6E64] text-white shadow-2xs'
+                  : 'text-[#2B2A28] hover:bg-[#F7F4EE]'
+              }`}
+              title="Cursiva (Ctrl+I)"
+            >
+              <Italic className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-[1px] h-3.5 bg-[#E4DECE] mx-0.5" />
+
+            {/* Color de texto dropdown */}
+            <div className="relative color-picker-popover-container">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
+                className="flex items-center gap-0.5 p-1 rounded-md hover:bg-[#F7F4EE] transition-all cursor-pointer"
+                title="Color de texto"
+              >
+                <div className="flex flex-col items-center">
+                  <Baseline className="w-3.5 h-3.5 text-[#2B2A28]" />
+                  <span
+                    className="w-3.5 h-[3px] rounded-full mt-[-1px]"
+                    style={{ backgroundColor: activeColor || '#2B2A28' }}
+                  />
+                </div>
+                <ChevronDown className="w-2.5 h-2.5 text-[#8A8478]" />
+              </button>
+
+              {isColorPickerOpen && (
+                <ColorPickerPopover
+                  activeColor={activeColor}
+                  onSelectColor={handleApplyColor}
+                  onClose={() => setIsColorPickerOpen(false)}
+                />
+              )}
+            </div>
+
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleClearFormat}
+              className="p-1.5 text-[#8A8478] hover:text-[#B4553F] hover:bg-[#F7F4EE] rounded-md transition-all cursor-pointer"
+              title="Restablecer formato"
+            >
+              <RemoveFormatting className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           {/* Undo / Redo controls */}
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
@@ -2197,7 +2920,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
         </div>
 
         {/* Blocks rendering */}
-        <div className="space-y-4">
+        <div ref={noteEditorRef} className="space-y-4">
           {localNote.blocks.map((block) => (
             <div key={block.id} className="relative group">
               {/* Delete block action on hover */}
@@ -2213,24 +2936,56 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
               {/* Heading block */}
               {block.type === 'heading' && (
-                <input
-                  type="text"
+                <RichEditableBlock
+                  blockId={block.id}
                   value={block.content}
                   disabled={localNote.deleted}
-                  onChange={(e) => handleUpdateBlockContent(block.id, e.target.value)}
+                  onChange={(val) => handleUpdateBlockContent(block.id, val)}
                   placeholder="Encabezado..."
+                  singleLine={true}
+                  onFocus={() => {
+                    activeTargetRef.current = {
+                      type: 'rich',
+                      blockId: block.id,
+                      element: blockElementsRef.current.get(block.id) || null,
+                    };
+                    updateActiveFormats();
+                  }}
+                  registerRef={(el) => {
+                    if (el) {
+                      blockElementsRef.current.set(block.id, el);
+                    } else {
+                      blockElementsRef.current.delete(block.id);
+                    }
+                  }}
                   className="w-full text-lg font-bold text-[#2B2A28] outline-none bg-transparent placeholder-[#8A8478]/40 border-b border-transparent focus:border-[#E4DECE]"
                 />
               )}
 
               {/* Text block */}
               {block.type === 'text' && (
-                <AutoResizeTextBlock
+                <RichEditableBlock
+                  blockId={block.id}
                   value={block.content}
                   disabled={localNote.deleted}
                   onChange={(val) => handleUpdateBlockContent(block.id, val)}
-                  placeholder="Escribe aquí... usa **negrita** para resaltar"
-                  className="w-full text-sm leading-relaxed text-[#2B2A28] outline-none bg-transparent resize-none placeholder-[#8A8478]/40 font-sans"
+                  placeholder="Escribe aquí tu texto..."
+                  onFocus={() => {
+                    activeTargetRef.current = {
+                      type: 'rich',
+                      blockId: block.id,
+                      element: blockElementsRef.current.get(block.id) || null,
+                    };
+                    updateActiveFormats();
+                  }}
+                  registerRef={(el) => {
+                    if (el) {
+                      blockElementsRef.current.set(block.id, el);
+                    } else {
+                      blockElementsRef.current.delete(block.id);
+                    }
+                  }}
+                  className="w-full text-sm leading-relaxed text-[#2B2A28] outline-none bg-transparent placeholder-[#8A8478]/40 font-sans min-h-[44px]"
                 />
               )}
 
@@ -2529,6 +3284,9 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   onReplaceFile={(newContent, fileName) =>
                     handleUpdateMarkdownBlock(block.id, newContent, fileName)
                   }
+                  onSetActiveTarget={(target) => {
+                    activeTargetRef.current = target;
+                  }}
                 />
               )}
 
@@ -2805,6 +3563,85 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Selection Bubble (Word / Notion style) */}
+      {floatingBubble.visible && localNote && !localNote.deleted && (
+        <div
+          style={{
+            position: 'fixed',
+            top: `${floatingBubble.top}px`,
+            left: `${floatingBubble.left}px`,
+            transform: 'translate(-50%, -100%)',
+            zIndex: 9999,
+          }}
+          className="flex items-center gap-1 bg-[#2B2A28] text-white px-2 py-1 rounded-xl shadow-2xl border border-white/10 animate-in fade-in duration-150 select-none"
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleToggleBold}
+            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+              isBoldActive ? 'bg-[#3F6E64] text-white' : 'text-neutral-200 hover:bg-white/15'
+            }`}
+            title="Negrita (Ctrl+B)"
+          >
+            <Bold className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleToggleItalic}
+            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+              isItalicActive ? 'bg-[#3F6E64] text-white' : 'text-neutral-200 hover:bg-white/15'
+            }`}
+            title="Cursiva (Ctrl+I)"
+          >
+            <Italic className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-[1px] h-4 bg-white/20 mx-0.5" />
+
+          {/* Bubble Color Dropdown */}
+          <div className="relative color-picker-popover-container">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setIsBubbleColorOpen(!isBubbleColorOpen)}
+              className="flex items-center gap-0.5 p-1 rounded-lg hover:bg-white/15 transition-colors cursor-pointer"
+              title="Color de texto"
+            >
+              <div className="flex flex-col items-center">
+                <Baseline className="w-3.5 h-3.5 text-white" />
+                <span
+                  className="w-3.5 h-[3px] rounded-full mt-[-1px]"
+                  style={{ backgroundColor: activeColor || '#2B2A28' }}
+                />
+              </div>
+              <ChevronDown className="w-2.5 h-2.5 text-neutral-300" />
+            </button>
+
+            {isBubbleColorOpen && (
+              <ColorPickerPopover
+                activeColor={activeColor}
+                onSelectColor={handleApplyColor}
+                onClose={() => setIsBubbleColorOpen(false)}
+                isDarkTheme={true}
+              />
+            )}
+          </div>
+
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handleClearFormat}
+            className="p-1.5 text-neutral-300 hover:text-white hover:bg-white/15 rounded-lg transition-colors cursor-pointer"
+            title="Restablecer formato"
+          >
+            <RemoveFormatting className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>

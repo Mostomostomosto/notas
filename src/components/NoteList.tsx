@@ -51,7 +51,8 @@ export const NoteList: React.FC<NoteListProps> = ({
     if (note.title.toLowerCase().includes(query)) return true;
     return note.blocks.some((b) => {
       if (b.type === 'heading' || b.type === 'text') {
-        return b.content.toLowerCase().includes(query);
+        const clean = b.content.replace(/<[^>]*>/g, ' ');
+        return clean.toLowerCase().includes(query);
       }
       if (b.type === 'checklist') {
         return b.items.some((item) => item.text.toLowerCase().includes(query));
@@ -61,6 +62,10 @@ export const NoteList: React.FC<NoteListProps> = ({
           b.labels.some((l) => l.toLowerCase().includes(query)) ||
           b.rows.some((r) => r.some((cell) => cell.toLowerCase().includes(query)))
         );
+      }
+      if (b.type === 'markdown' && b.content) {
+        const clean = b.content.replace(/<[^>]*>/g, ' ');
+        return clean.toLowerCase().includes(query);
       }
       return false;
     });
@@ -97,10 +102,19 @@ export const NoteList: React.FC<NoteListProps> = ({
           .join(' · ');
       }
       if (b.type === 'text' && b.content.trim()) {
-        return b.content.replace(/\*\*(.*?)\*\*/g, '$1');
+        const clean = b.content
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/&nbsp;/g, ' ')
+          .trim();
+        if (clean) return clean;
       }
       if (b.type === 'heading' && b.content.trim()) {
-        return b.content;
+        const clean = b.content
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .trim();
+        if (clean) return clean;
       }
       if (b.type === 'columns' && b.labels.length > 0) {
         if (b.rows.length > 0) {

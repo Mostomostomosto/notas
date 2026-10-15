@@ -95,12 +95,13 @@ body {
 .markdown-content strong,
 .markdown-content b {
   font-weight: 700;
-  color: var(--ink);
+  color: inherit;
 }
 
 .markdown-content em,
 .markdown-content i {
   font-style: italic;
+  color: inherit;
 }
 
 .markdown-content del,
@@ -210,5 +211,35 @@ body {
 
 .markdown-content a:hover {
   color: var(--ink);
+}
+
+/* ContentEditable Rich Text Styles */
+.rich-editable {
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+}
+
+.rich-editable:empty::before,
+.rich-editable[data-empty='true']::before {
+  content: attr(data-placeholder);
+  color: #8A8478;
+  opacity: 0.45;
+  pointer-events: none;
+  display: inline-block;
+  height: 0;
+  float: left;
+}
+
+.rich-editable b,
+.rich-editable strong {
+  font-weight: 700;
+  color: inherit;
+}
+
+.rich-editable i,
+.rich-editable em {
+  font-style: italic;
+  color: inherit;
 }
 
