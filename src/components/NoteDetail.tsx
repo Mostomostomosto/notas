@@ -311,6 +311,7 @@ interface ColorPickerPopoverProps {
   onClose: () => void;
   isDarkTheme?: boolean;
   position?: { top: number; left: number };
+  customStyle?: React.CSSProperties;
 }
 
 const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
@@ -319,10 +320,13 @@ const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
   onClose,
   isDarkTheme,
   position,
+  customStyle,
 }) => {
   const normActive = (activeColor || '#2B2A28').toUpperCase();
 
-  const containerStyle: React.CSSProperties = position
+  const containerStyle: React.CSSProperties = customStyle
+    ? customStyle
+    : position
     ? {
         position: 'fixed',
         top: `${position.top}px`,
@@ -1485,7 +1489,12 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isBubbleColorOpen, setIsBubbleColorOpen] = useState(false);
   const [colorPickerPos, setColorPickerPos] = useState({ top: 0, left: 0 });
-  const [bubbleColorPos, setBubbleColorPos] = useState({ top: 0, left: 0 });
+  const [bubbleColorStyle, setBubbleColorStyle] = useState<React.CSSProperties>({
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    left: '-93px',
+    zIndex: 99999,
+  });
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleColorBtnRef = useRef<HTMLButtonElement>(null);
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
@@ -1556,10 +1565,36 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     e.preventDefault();
     if (!isBubbleColorOpen && bubbleColorBtnRef.current) {
       const rect = bubbleColorBtnRef.current.getBoundingClientRect();
-      setBubbleColorPos({
-        top: rect.bottom + 6,
-        left: Math.max(12, Math.min(window.innerWidth - 230, rect.left)),
-      });
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const placement = spaceBelow < 180 ? 'top' : 'bottom';
+
+      // El popover tiene min-w-[210px] (~216px). El botón mide ~30px (centro en 15px).
+      // Offset para que aparezca centrado bajo el botón: 15 - 108 = -93px
+      let leftOffset = -93;
+      const expectedLeft = rect.left + leftOffset;
+      const expectedRight = expectedLeft + 216;
+
+      if (expectedLeft < 10) {
+        leftOffset += (10 - expectedLeft);
+      } else if (expectedRight > window.innerWidth - 10) {
+        leftOffset -= (expectedRight - (window.innerWidth - 10));
+      }
+
+      setBubbleColorStyle(
+        placement === 'top'
+          ? {
+              position: 'absolute',
+              bottom: 'calc(100% + 6px)',
+              left: `${leftOffset}px`,
+              zIndex: 99999,
+            }
+          : {
+              position: 'absolute',
+              top: 'calc(100% + 6px)',
+              left: `${leftOffset}px`,
+              zIndex: 99999,
+            }
+      );
     }
     setIsBubbleColorOpen((prev) => !prev);
   };
@@ -4395,7 +4430,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                 onSelectColor={handleApplyColor}
                 onClose={() => setIsBubbleColorOpen(false)}
                 isDarkTheme={true}
-                position={bubbleColorPos}
+                customStyle={bubbleColorStyle}
               />
             )}
           </div>
