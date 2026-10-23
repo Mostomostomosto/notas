@@ -1275,6 +1275,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const [bubbleColorPos, setBubbleColorPos] = useState({ top: 0, left: 0 });
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleColorBtnRef = useRef<HTMLButtonElement>(null);
+  const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
 
   const [floatingBubble, setFloatingBubble] = useState<{
     visible: boolean;
@@ -1350,6 +1351,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Sincronizar si cambia la nota seleccionada o si llega una actualización externa
   useEffect(() => {
+    setIsTagDropdownOpen(false);
     if (note) {
       if (!localNote || note.id !== localNote.id || (!pendingSaveRef.current && note.updatedAt !== localNote.updatedAt)) {
         setLocalNote(note);
@@ -1731,6 +1733,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   // Cambiar etiqueta
   const handleSelectTag = (tagName: string) => {
+    setIsTagDropdownOpen(false);
     pushDiscreteSnapshot();
     const updated: Note = {
       ...localNote,
@@ -2716,7 +2719,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   return (
     <div className="flex-1 bg-white flex flex-col h-full min-w-0">
       {/* Top Toolbar */}
-      <div className="px-8 py-3 border-b border-[#E4DECE] flex items-center justify-between">
+      <div className="px-8 py-3 border-b border-[#E4DECE] flex items-center justify-between relative z-40">
         <div className="flex items-center gap-2">
           {localNote.deleted ? (
             <span className="text-xs bg-[#B4553F]/10 text-[#B4553F] px-2 py-1 rounded font-medium">
@@ -2740,52 +2743,101 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
         <div className="flex items-center gap-2">
           {/* Tag Selector */}
           {!localNote.deleted && (
-            <div className="relative group">
-              <button className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-[#E4DECE] text-[#8A8478] hover:border-[#2B2A28] hover:text-[#2B2A28] transition-all">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsTagDropdownOpen((prev) => !prev)}
+                className={`relative z-50 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                  isTagDropdownOpen
+                    ? 'border-[#2B2A28] text-[#2B2A28] bg-[#F7F4EE]'
+                    : 'border-[#E4DECE] text-[#8A8478] hover:border-[#2B2A28] hover:text-[#2B2A28]'
+                }`}
+              >
                 <TagIcon className="w-3.5 h-3.5" />
                 <span>{localNote.tag || 'Etiqueta'}</span>
+                <ChevronDown
+                  className={`w-3 h-3 text-[#8A8478] transition-transform ${
+                    isTagDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
               </button>
 
-              {/* Dropdown de etiquetas */}
-              <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[170px] max-h-64 overflow-y-auto">
-                {(() => {
-                  const renderTagOption = (tagItem: Tag, depth: number = 0): React.ReactNode => {
-                    const children = tags.filter((c: Tag) => c.parentId === tagItem.id && !c.archived);
-                    return (
-                      <div key={tagItem.id}>
-                        <button
-                          onClick={() => handleSelectTag(tagItem.name)}
-                          className="w-full flex items-center gap-2 py-1.5 pr-2.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
-                          style={{ paddingLeft: `${10 + depth * 12}px` }}
-                        >
-                          <span
-                            className="rounded-full shrink-0"
-                            style={{
-                              width: depth === 0 ? '8px' : '6px',
-                              height: depth === 0 ? '8px' : '6px',
-                              backgroundColor:
-                                depth === 0
-                                  ? tagItem.color
-                                  : desaturateColor(
-                                      tagItem.color,
-                                      Math.min(0.65, 0.25 + depth * 0.15)
-                                    ),
-                            }}
-                          />
-                          <span className={depth === 0 ? 'font-medium' : 'text-[11.5px]'}>
-                            {tagItem.name}
-                          </span>
-                        </button>
-                        {children.map((child: Tag) => renderTagOption(child, depth + 1))}
-                      </div>
-                    );
-                  };
+              {/* Click-outside backdrop */}
+              {isTagDropdownOpen && (
+                <div
+                  className="fixed inset-0 z-40 bg-transparent"
+                  onClick={() => setIsTagDropdownOpen(false)}
+                />
+              )}
 
-                  return tags
-                    .filter((t: Tag) => !t.parentId && !t.archived)
-                    .map((rootTag: Tag) => renderTagOption(rootTag, 0));
-                })()}
-              </div>
+              {/* Dropdown de etiquetas */}
+              {isTagDropdownOpen && (
+                <div className="absolute right-0 top-full pt-1 z-50 min-w-[190px]">
+                  <div className="bg-white border border-[#E4DECE] rounded-xl shadow-xl p-1.5 max-h-64 overflow-y-auto">
+                    {/* Opción Sin etiqueta */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTag('')}
+                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-left cursor-pointer transition-colors ${
+                        !localNote.tag
+                          ? 'font-semibold text-[#2B2A28] bg-[#F7F4EE]/60'
+                          : 'text-[#8A8478]'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full border border-dashed border-[#8A8478] shrink-0" />
+                      <span>Sin etiqueta</span>
+                    </button>
+
+                    <div className="my-1 border-t border-[#E4DECE]/60" />
+
+                    {(() => {
+                      const renderTagOption = (tagItem: Tag, depth: number = 0): React.ReactNode => {
+                        const children = tags.filter(
+                          (c: Tag) => c.parentId === tagItem.id && !c.archived
+                        );
+                        const isSelected = localNote.tag === tagItem.name;
+                        return (
+                          <div key={tagItem.id}>
+                            <button
+                              type="button"
+                              onClick={() => handleSelectTag(tagItem.name)}
+                              className={`w-full flex items-center gap-2 py-1.5 pr-2.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer transition-colors ${
+                                isSelected ? 'bg-[#F7F4EE] font-semibold' : ''
+                              }`}
+                              style={{ paddingLeft: `${10 + depth * 12}px` }}
+                            >
+                              <span
+                                className="rounded-full shrink-0"
+                                style={{
+                                  width: depth === 0 ? '8px' : '6px',
+                                  height: depth === 0 ? '8px' : '6px',
+                                  backgroundColor:
+                                    depth === 0
+                                      ? tagItem.color
+                                      : desaturateColor(
+                                          tagItem.color,
+                                          Math.min(0.65, 0.25 + depth * 0.15)
+                                        ),
+                                }}
+                              />
+                              <span
+                                className={depth === 0 ? 'font-medium' : 'text-[11.5px]'}
+                              >
+                                {tagItem.name}
+                              </span>
+                            </button>
+                            {children.map((child: Tag) => renderTagOption(child, depth + 1))}
+                          </div>
+                        );
+                      };
+
+                      return tags
+                        .filter((t: Tag) => !t.parentId && !t.archived)
+                        .map((rootTag: Tag) => renderTagOption(rootTag, 0));
+                    })()}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
