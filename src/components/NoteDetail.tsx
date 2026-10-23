@@ -2748,57 +2748,43 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
               {/* Dropdown de etiquetas */}
               <div className="hidden group-hover:block absolute right-0 top-full mt-1 bg-white border border-[#E4DECE] rounded-xl shadow-lg p-1.5 z-30 min-w-[170px] max-h-64 overflow-y-auto">
-                {tags
-                  .filter((t: Tag) => !t.parentId && !t.archived)
-                  .map((parentTag: Tag) => {
-                    const children = tags.filter((t: Tag) => t.parentId === parentTag.id && !t.archived);
+                {(() => {
+                  const renderTagOption = (tagItem: Tag, depth: number = 0): React.ReactNode => {
+                    const children = tags.filter((c: Tag) => c.parentId === tagItem.id && !c.archived);
                     return (
-                      <div key={parentTag.id}>
+                      <div key={tagItem.id}>
                         <button
-                          onClick={() => handleSelectTag(parentTag.name)}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
+                          onClick={() => handleSelectTag(tagItem.name)}
+                          className="w-full flex items-center gap-2 py-1.5 pr-2.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
+                          style={{ paddingLeft: `${10 + depth * 12}px` }}
                         >
                           <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: parentTag.color }}
+                            className="rounded-full shrink-0"
+                            style={{
+                              width: depth === 0 ? '8px' : '6px',
+                              height: depth === 0 ? '8px' : '6px',
+                              backgroundColor:
+                                depth === 0
+                                  ? tagItem.color
+                                  : desaturateColor(
+                                      tagItem.color,
+                                      Math.min(0.65, 0.25 + depth * 0.15)
+                                    ),
+                            }}
                           />
-                          <span className="font-medium">{parentTag.name}</span>
+                          <span className={depth === 0 ? 'font-medium' : 'text-[11.5px]'}>
+                            {tagItem.name}
+                          </span>
                         </button>
-                        {children.map((child: Tag) => {
-                          const grandChildren = tags.filter(
-                            (t: Tag) => t.parentId === child.id && !t.archived
-                          );
-                          return (
-                            <div key={child.id}>
-                              <button
-                                onClick={() => handleSelectTag(child.name)}
-                                className="w-full flex items-center gap-2 pl-6 pr-2.5 py-1 text-[11.5px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer"
-                              >
-                                <span
-                                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                                  style={{ backgroundColor: desaturateColor(child.color, 0.55) }}
-                                />
-                                <span>{child.name}</span>
-                              </button>
-                              {grandChildren.map((grandChild: Tag) => (
-                                <button
-                                  key={grandChild.id}
-                                  onClick={() => handleSelectTag(grandChild.name)}
-                                  className="w-full flex items-center gap-2 pl-10 pr-2.5 py-1 text-[11px] rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28]/85 text-left cursor-pointer"
-                                >
-                                  <span
-                                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                                    style={{ backgroundColor: desaturateColor(grandChild.color, 0.3) }}
-                                  />
-                                  <span>{grandChild.name}</span>
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        })}
+                        {children.map((child: Tag) => renderTagOption(child, depth + 1))}
                       </div>
                     );
-                  })}
+                  };
+
+                  return tags
+                    .filter((t: Tag) => !t.parentId && !t.archived)
+                    .map((rootTag: Tag) => renderTagOption(rootTag, 0));
+                })()}
               </div>
             </div>
           )}
@@ -3048,7 +3034,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                     ? (activeTag.parentId
                         ? desaturateColor(
                             activeTag.color,
-                            getTagDepth(activeTag.id, tags) >= 2 ? 0.3 : 0.55
+                            Math.min(0.65, 0.25 + getTagDepth(activeTag.id, tags) * 0.15)
                           )
                         : activeTag.color)
                     : '#8A8478',

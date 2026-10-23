@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -70,6 +70,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newTagParentId, setNewTagParentId] = useState('');
   const [isLogoMenuOpen, setIsLogoMenuOpen] = useState(false);
 
+  // Ancho redimensionable de la primera columna con persistencia en localStorage
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('sidebar_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 180 && parsed <= 480) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 240;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  );
+
+  useEffect(() => {
+    const handleResize = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newWidth = Math.min(480, Math.max(180, startWidth + (moveEvent.clientX - startX)));
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = (upEvent: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setIsResizing(false);
+      const finalWidth = Math.min(480, Math.max(180, startWidth + (upEvent.clientX - startX)));
+      try {
+        localStorage.setItem('sidebar_width', String(finalWidth));
+      } catch {}
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
   // Estados para subetiquetas y menús contextuales
   interface ContextMenuInfo {
     x: number;
@@ -110,9 +159,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   });
   const totalArchivedCount = tags.filter((t: Tag) => t.archived).length;
 
-  const getExactTagCount = (tagName: string) => {
-    return notes.filter((n) => !n.deleted && n.tag && n.tag.toLowerCase() === tagName.toLowerCase()).length;
-  };
 
   const getTagCount = (tag: Tag) => {
     const descendants = getDescendantTags(tag.id, tags);
@@ -120,21 +166,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return notes.filter((n) => !n.deleted && n.tag && names.includes(n.tag.toLowerCase())).length;
   };
 
-  const validateCanBeParent = (targetParentId: string): boolean => {
-    const parentTag = tags.find((t) => t.id === targetParentId);
-    if (!parentTag) return true;
-    const depth = getTagDepth(targetParentId, tags);
-    if (depth >= 2) {
-      alert('Esta etiqueta ya está en el nivel máximo de subetiquetas y no puede tener hijas propias.');
-      return false;
-    }
+  const validateCanBeParent = (_targetParentId: string): boolean => {
+    // Sin límite de anidado: cualquier etiqueta puede tener subetiquetas
     return true;
-  };
-
-  const getMaxSubtreeDepth = (tagId: string, allTags: Tag[]): number => {
-    const children = allTags.filter((t) => t.parentId === tagId);
-    if (children.length === 0) return 0;
-    return 1 + Math.max(...children.map((c) => getMaxSubtreeDepth(c.id, allTags)));
   };
 
   const canDropTag = (sourceId: string | null, targetId: string | null): boolean => {
@@ -160,16 +194,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // Ya es hija de este destino
     if (sourceTag.parentId === targetTag.id) return false;
 
-    // No se puede soltar en uno de sus propios descendientes
+    // No se puede soltar en uno de sus propios descendientes (evita ciclos)
     const descendants = getDescendantTags(sourceTag.id, tags);
     if (descendants.some((d) => d.id === targetTag.id)) return false;
-
-    // Máximo 2 niveles de subetiquetas (raíz -> hija -> nieta)
-    const targetDepth = getTagDepth(targetTag.id, tags);
-    if (targetDepth >= 2) return false;
-
-    const subtreeDepth = getMaxSubtreeDepth(sourceTag.id, tags);
-    if (targetDepth + 1 + subtreeDepth > 2) return false;
 
     return true;
   };
@@ -347,12 +374,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return;
       }
 
-      const targetParentDepth = getTagDepth(newParentId, tags);
-      const subtreeDepth = getMaxSubtreeDepth(tagToMove.id, tags);
-      if (targetParentDepth + 1 + subtreeDepth > 2) {
-        alert('Mover esta etiqueta aquí excedería el límite de 2 niveles de subetiquetas.');
-        return;
-      }
 
       const parentTag = tags.find((t) => t.id === newParentId);
       if (!parentTag) return;
@@ -480,8 +501,217 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return false;
   };
 
+  // Renderizador recursivo para etiquetas a cualquier nivel de anidado
+  const renderTagItem = (
+    tag: Tag,
+    depth: number = 0,
+    isArchivedContext: boolean = false
+  ): React.ReactNode => {
+    const active = isFilterActive({
+      type: 'tag',
+      tagId: tag.id,
+      tagName: tag.name,
+    });
+    const count = getTagCount(tag);
+    const childTags = isArchivedContext ? getArchivedChildTags(tag.id) : getChildTags(tag.id);
+    const { isDraggingThis, isDragOverThis, isValidDropTarget, ...dragHandlers } =
+      getTagDragProps(tag);
+    const parentTag = tag.parentId ? tags.find((t) => t.id === tag.parentId) : null;
+
+    const dotColor =
+      depth === 0
+        ? tag.color
+        : desaturateColor(tag.color, Math.min(0.65, 0.25 + depth * 0.15));
+
+    return (
+      <div key={tag.id} className="space-y-0.5">
+        <div
+          {...dragHandlers}
+          onContextMenu={(e) => openContextMenu(e, 'tag', tag)}
+          onClick={() => {
+            if (dragOccurredRef.current) return;
+            onSelectFilter({
+              type: 'tag',
+              tagId: tag.id,
+              tagName: tag.name,
+            });
+          }}
+          style={{ paddingLeft: `${12 + depth * 14}px` }}
+          className={`w-full flex items-center justify-between pr-3 py-1.5 rounded-lg font-medium transition-all group cursor-pointer ${
+            depth === 0 ? 'text-xs' : 'text-[11.5px]'
+          } ${
+            active
+              ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
+              : 'hover:bg-black/5 text-[#2B2A28]'
+          } ${
+            isDraggingThis
+              ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+              : ''
+          } ${
+            isDragOverThis
+              ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
+              : ''
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`rounded-full shrink-0 shadow-xs ${
+                depth === 0 ? 'w-2.5 h-2.5' : 'w-2 h-2 opacity-85'
+              }`}
+              style={{ backgroundColor: dotColor }}
+            />
+            <span className="truncate">{tag.name}</span>
+            {isArchivedContext && tag.archived && (
+              <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
+                archivada
+              </span>
+            )}
+            {isArchivedContext && parentTag && !parentTag.archived && (
+              <span className="text-[9.5px] text-[#8A8478] italic truncate">
+                (de {parentTag.name})
+              </span>
+            )}
+          </div>
+
+          {isDragOverThis ? (
+            <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
+              <CornerDownRight className="w-3 h-3" />
+              Hacer subetiqueta
+            </span>
+          ) : (
+            <div className="flex items-center gap-1">
+              {!isArchivedContext && tag.id !== 'sin-etiqueta' && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingSubtagForId(tag.id);
+                    setSubtagName('');
+                  }}
+                  className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                    active
+                      ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                      : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                  }`}
+                  title={`Añadir subetiqueta a ${tag.name}`}
+                >
+                  <Plus className="w-3 h-3" />
+                </span>
+              )}
+              {tag.id !== 'sin-etiqueta' && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openContextMenu(e, 'tag', tag);
+                  }}
+                  className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                    active
+                      ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                      : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                  }`}
+                  title={isArchivedContext ? 'Opciones de etiqueta archivada' : 'Opciones de etiqueta'}
+                >
+                  <MoreVertical className="w-3 h-3" />
+                </span>
+              )}
+              <span
+                className={`text-[11px] ${
+                  active ? 'text-white/80' : 'text-[#8A8478]'
+                }`}
+              >
+                {count}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Formulario para añadir subetiqueta */}
+        {addingSubtagForId === tag.id && (
+          <form
+            onSubmit={(e) => handleCreateSubtag(tag.id, tag.color, e)}
+            className="mr-1 my-1 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs"
+            style={{ marginLeft: `${24 + depth * 14}px` }}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{
+                  backgroundColor: desaturateColor(
+                    tag.color,
+                    Math.min(0.65, 0.25 + (depth + 1) * 0.15)
+                  ),
+                }}
+              />
+              <span className="text-[10px] text-[#8A8478] font-medium truncate">
+                Nueva subetiqueta de {tag.name}
+              </span>
+            </div>
+            <input
+              type="text"
+              value={subtagName}
+              onChange={(e) => setSubtagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleCreateSubtag(tag.id, tag.color, e);
+                } else if (e.key === 'Escape') {
+                  setAddingSubtagForId(null);
+                  setSubtagName('');
+                }
+              }}
+              placeholder="Nombre subetiqueta (Enter para guardar)"
+              autoFocus
+              className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
+            />
+            <div className="flex justify-end gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingSubtagForId(null);
+                  setSubtagName('');
+                }}
+                className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28] cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium cursor-pointer"
+              >
+                Guardar
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Subetiquetas hijas recursivas */}
+        {childTags.map((child: Tag) => renderTagItem(child, depth + 1, isArchivedContext))}
+      </div>
+    );
+  };
+
   return (
-    <aside className="w-60 bg-[#EDEAE2] border-r border-[#E4DECE] flex flex-col h-full select-none text-[#2B2A28]">
+    <aside
+      className="relative flex-shrink-0 bg-[#EDEAE2] border-r border-[#E4DECE] flex flex-col h-full select-none text-[#2B2A28]"
+      style={isDesktop ? { width: `${sidebarWidth}px`, minWidth: `${sidebarWidth}px` } : { width: '16rem' }}
+    >
+      {/* Barra de redimensionamiento arrastrable en escritorio */}
+      <div
+        onMouseDown={handleResizeStart}
+        className="hidden md:block absolute top-0 -right-1.5 w-3 h-full cursor-col-resize z-30 group"
+        title="Arrastra para redimensionar la primera columna"
+      >
+        <div className="w-0.5 h-full mx-auto group-hover:bg-[#3F6E64]/60 group-active:bg-[#3F6E64] transition-colors" />
+      </div>
+
+      {isResizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none" />
+      )}
       {/* App Header / Brand con Menú desplegable */}
       <div className="p-3 border-b border-[#E4DECE]/70 relative">
         <button
@@ -745,323 +975,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
 
-              {archivedRootTags.map((rootTag: Tag) => {
-                const active = isFilterActive({
-                  type: 'tag',
-                  tagId: rootTag.id,
-                  tagName: rootTag.name,
-                });
-                const count = getTagCount(rootTag);
-                const childTags = getArchivedChildTags(rootTag.id);
-                const { isDraggingThis, isDragOverThis, isValidDropTarget, ...dragHandlers } =
-                  getTagDragProps(rootTag);
-
-                return (
-                  <div key={rootTag.id} className="space-y-0.5">
-                    <div
-                      {...dragHandlers}
-                      onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
-                      onClick={() => {
-                        if (dragOccurredRef.current) return;
-                        onSelectFilter({
-                          type: 'tag',
-                          tagId: rootTag.id,
-                          tagName: rootTag.name,
-                        });
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
-                        active
-                          ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                          : 'hover:bg-black/5 text-[#2B2A28]/80'
-                      } ${
-                        isDraggingThis
-                          ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                          : ''
-                      } ${
-                        isDragOverThis
-                          ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0 opacity-70"
-                          style={{ backgroundColor: rootTag.color }}
-                        />
-                        <span className="truncate">{rootTag.name}</span>
-                        <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
-                          archivada
-                        </span>
-                      </div>
-                      {isDragOverThis ? (
-                        <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
-                          <CornerDownRight className="w-3 h-3" />
-                          Hacer hija
-                        </span>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openContextMenu(e, 'tag', rootTag);
-                            }}
-                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                              active
-                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                            }`}
-                            title="Opciones de etiqueta archivada"
-                          >
-                            <MoreVertical className="w-3 h-3" />
-                          </span>
-                          <span
-                            className={`text-[11px] ${
-                              active ? 'text-white/80' : 'text-[#8A8478]'
-                            }`}
-                          >
-                            {count}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Subetiquetas hijas de la raíz archivada */}
-                    {childTags.map((child: Tag) => {
-                      const childActive = isFilterActive({
-                        type: 'tag',
-                        tagId: child.id,
-                        tagName: child.name,
-                      });
-                      const childCount = getTagCount(child);
-                      const grandChildren = getArchivedChildTags(child.id);
-                      const { isDraggingThis, isDragOverThis, isValidDropTarget, ...childDragHandlers } =
-                        getTagDragProps(child);
-
-                      return (
-                        <div key={child.id} className="space-y-0.5">
-                          <div
-                            {...childDragHandlers}
-                            onContextMenu={(e) => openContextMenu(e, 'tag', child)}
-                            onClick={() => {
-                              if (dragOccurredRef.current) return;
-                              onSelectFilter({
-                                type: 'tag',
-                                tagId: child.id,
-                                tagName: child.name,
-                              });
-                            }}
-                            className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
-                              childActive
-                                ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                                : 'hover:bg-black/5 text-[#2B2A28]/80'
-                            } ${
-                              isDraggingThis
-                                ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                                : ''
-                            } ${
-                              isDragOverThis
-                                ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
-                                : ''
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="w-2 h-2 rounded-full shrink-0 opacity-70"
-                                style={{ backgroundColor: desaturateColor(child.color, 0.55) }}
-                              />
-                              <span className="truncate">{child.name}</span>
-                              {child.archived && (
-                                <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
-                                  archivada
-                                </span>
-                              )}
-                            </div>
-                            {isDragOverThis ? (
-                              <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
-                                <CornerDownRight className="w-3 h-3" />
-                                Hacer nieta
-                              </span>
-                            ) : (
-                              <div className="flex items-center gap-1">
-                                <span
-                                  role="button"
-                                  tabIndex={0}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openContextMenu(e, 'tag', child);
-                                  }}
-                                  className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                    childActive
-                                      ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                      : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                  }`}
-                                  title="Opciones de subetiqueta"
-                                >
-                                  <MoreVertical className="w-3 h-3" />
-                                </span>
-                                <span
-                                  className={`text-[10.5px] ${
-                                    childActive ? 'text-white/80' : 'text-[#8A8478]'
-                                  }`}
-                                >
-                                  {childCount}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Subetiquetas nietas archivadas */}
-                          {grandChildren.map((grandChild: Tag) => {
-                            const grandChildActive = isFilterActive({
-                              type: 'tag',
-                              tagId: grandChild.id,
-                              tagName: grandChild.name,
-                            });
-                            const grandChildCount = getExactTagCount(grandChild.name);
-                            const { isDraggingThis, ...grandChildDragHandlers } =
-                              getTagDragProps(grandChild);
-
-                            return (
-                              <div
-                                key={grandChild.id}
-                                {...grandChildDragHandlers}
-                                onContextMenu={(e) => openContextMenu(e, 'tag', grandChild)}
-                                onClick={() => {
-                                  if (dragOccurredRef.current) return;
-                                  onSelectFilter({
-                                    type: 'tag',
-                                    tagId: grandChild.id,
-                                    tagName: grandChild.name,
-                                  });
-                                }}
-                                className={`w-full flex items-center justify-between pl-11 pr-3 py-1.5 rounded-lg text-[11px] font-medium transition-all group cursor-pointer ${
-                                  grandChildActive
-                                    ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                                    : 'hover:bg-black/5 text-[#2B2A28]/80'
-                                } ${
-                                  isDraggingThis
-                                    ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                                    : ''
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className="w-1.5 h-1.5 rounded-full shrink-0 opacity-70"
-                                    style={{ backgroundColor: desaturateColor(grandChild.color, 0.3) }}
-                                  />
-                                  <span className="truncate">{grandChild.name}</span>
-                                  {grandChild.archived && (
-                                    <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-[#8A8478]">
-                                      archivada
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <span
-                                    role="button"
-                                    tabIndex={0}
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openContextMenu(e, 'tag', grandChild);
-                                    }}
-                                    className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                      grandChildActive
-                                        ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                        : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                    }`}
-                                    title="Opciones de subetiqueta"
-                                  >
-                                    <MoreVertical className="w-3 h-3" />
-                                  </span>
-                                  <span
-                                    className={`text-[10px] ${
-                                      grandChildActive ? 'text-white/80' : 'text-[#8A8478]'
-                                    }`}
-                                  >
-                                    {grandChildCount}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
+              {archivedRootTags.map((rootTag: Tag) => renderTagItem(rootTag, 0, true))}
 
               {/* Subetiquetas archivadas por su cuenta cuyo padre NO está archivado */}
-              {orphanArchivedChildTags.map((child: Tag) => {
-                const parent = tags.find((p) => p.id === child.parentId);
-                const childActive = isFilterActive({
-                  type: 'tag',
-                  tagId: child.id,
-                  tagName: child.name,
-                });
-                const childCount = getExactTagCount(child.name);
-                return (
-                  <div
-                    key={child.id}
-                    onContextMenu={(e) => openContextMenu(e, 'tag', child)}
-                    onClick={() =>
-                      onSelectFilter({
-                        type: 'tag',
-                        tagId: child.id,
-                        tagName: child.name,
-                      })
-                    }
-                    className={`w-full flex items-center justify-between pl-6 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
-                      childActive
-                        ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                        : 'hover:bg-black/5 text-[#2B2A28]/80'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0 opacity-70"
-                        style={{ backgroundColor: desaturateColor(child.color) }}
-                      />
-                      <span className="truncate">{child.name}</span>
-                      {parent && (
-                        <span className="text-[9.5px] text-[#8A8478] italic truncate">
-                          (de {parent.name})
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openContextMenu(e, 'tag', child);
-                        }}
-                        className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                          childActive
-                            ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                            : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                        }`}
-                        title="Opciones de subetiqueta archivada"
-                      >
-                        <MoreVertical className="w-3 h-3" />
-                      </span>
-                      <span
-                        className={`text-[10.5px] ${
-                          childActive ? 'text-white/80' : 'text-[#8A8478]'
-                        }`}
-                      >
-                        {childCount}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+              {orphanArchivedChildTags.map((orphan: Tag) =>
+                renderTagItem(orphan, Math.max(1, getTagDepth(orphan.id, tags)), true)
+              )}
             </div>
           )}
         </div>
@@ -1123,391 +1042,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           <div className="space-y-1">
-            {rootTags.map((rootTag: Tag) => {
-              const active = isFilterActive({
-                type: 'tag',
-                tagId: rootTag.id,
-                tagName: rootTag.name,
-              });
-              const count = getTagCount(rootTag);
-              const childTags = getChildTags(rootTag.id);
-              const { isDraggingThis, isDragOverThis, isValidDropTarget, ...dragHandlers } =
-                getTagDragProps(rootTag);
-
-              return (
-                <div key={rootTag.id} className="space-y-0.5">
-                  <div
-                    {...dragHandlers}
-                    onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
-                    onClick={() => {
-                      if (dragOccurredRef.current) return;
-                      onSelectFilter({
-                        type: 'tag',
-                        tagId: rootTag.id,
-                        tagName: rootTag.name,
-                      });
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
-                      active
-                        ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                        : 'hover:bg-black/5 text-[#2B2A28]'
-                    } ${
-                      isDraggingThis
-                        ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                        : ''
-                    } ${
-                      isDragOverThis
-                        ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
-                        : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
-                        style={{ backgroundColor: rootTag.color }}
-                      />
-                      <span className="truncate">{rootTag.name}</span>
-                    </div>
-                    {isDragOverThis ? (
-                      <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
-                        <CornerDownRight className="w-3 h-3" />
-                        Hacer hija
-                      </span>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        {rootTag.id !== 'sin-etiqueta' && (
-                          <>
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAddingSubtagForId(rootTag.id);
-                                setSubtagName('');
-                              }}
-                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                active
-                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                              }`}
-                              title={`Añadir subetiqueta a ${rootTag.name}`}
-                            >
-                              <Plus className="w-3 h-3" />
-                            </span>
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openContextMenu(e, 'tag', rootTag);
-                              }}
-                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                active
-                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                              }`}
-                              title="Opciones de etiqueta"
-                            >
-                              <MoreVertical className="w-3 h-3" />
-                            </span>
-                          </>
-                        )}
-                        <span
-                          className={`text-[11px] ${
-                            active ? 'text-white/80' : 'text-[#8A8478]'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Formulario para añadir subetiqueta */}
-                  {addingSubtagForId === rootTag.id && (
-                    <form
-                      onSubmit={(e) => handleCreateSubtag(rootTag.id, rootTag.color, e)}
-                      className="ml-6 mr-1 my-1 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs"
-                    >
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: desaturateColor(rootTag.color) }}
-                        />
-                        <span className="text-[10px] text-[#8A8478] font-medium">
-                          Nueva subetiqueta de {rootTag.name}
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        value={subtagName}
-                        onChange={(e) => setSubtagName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleCreateSubtag(rootTag.id, rootTag.color, e);
-                          } else if (e.key === 'Escape') {
-                            setAddingSubtagForId(null);
-                            setSubtagName('');
-                          }
-                        }}
-                        placeholder="Nombre subetiqueta (Enter para guardar)"
-                        autoFocus
-                        className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
-                      />
-                      <div className="flex justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddingSubtagForId(null);
-                            setSubtagName('');
-                          }}
-                          className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28] cursor-pointer"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          type="submit"
-                          className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium cursor-pointer"
-                        >
-                          Guardar
-                        </button>
-                      </div>
-                    </form>
-                  )}
-
-                  {/* Subetiquetas hijas (anidadas) */}
-                  {childTags.map((child: Tag) => {
-                    const childActive = isFilterActive({
-                      type: 'tag',
-                      tagId: child.id,
-                      tagName: child.name,
-                    });
-                    const childCount = getTagCount(child);
-                    const desaturatedBg = desaturateColor(child.color, 0.55);
-                    const grandChildren = getChildTags(child.id);
-                    const { isDraggingThis, isDragOverThis, isValidDropTarget, ...childDragHandlers } =
-                      getTagDragProps(child);
-
-                    return (
-                      <div key={child.id} className="space-y-0.5">
-                        <div
-                          {...childDragHandlers}
-                          onContextMenu={(e) => openContextMenu(e, 'tag', child)}
-                          onClick={() => {
-                            if (dragOccurredRef.current) return;
-                            onSelectFilter({
-                              type: 'tag',
-                              tagId: child.id,
-                              tagName: child.name,
-                            });
-                          }}
-                          className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
-                            childActive
-                              ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                              : 'hover:bg-black/5 text-[#2B2A28]'
-                          } ${
-                            isDraggingThis
-                              ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                              : ''
-                          } ${
-                            isDragOverThis
-                              ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
-                              : ''
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0 shadow-xs"
-                              style={{ backgroundColor: desaturatedBg }}
-                            />
-                            <span className="truncate">{child.name}</span>
-                          </div>
-                          {isDragOverThis ? (
-                            <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
-                              <CornerDownRight className="w-3 h-3" />
-                              Hacer nieta
-                            </span>
-                          ) : (
-                            <div className="flex items-center gap-1">
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setAddingSubtagForId(child.id);
-                                  setSubtagName('');
-                                }}
-                                className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                  childActive
-                                    ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                    : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                }`}
-                                title={`Añadir subetiqueta a ${child.name}`}
-                              >
-                                <Plus className="w-3 h-3" />
-                              </span>
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openContextMenu(e, 'tag', child);
-                                }}
-                                className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                  childActive
-                                    ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                    : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                }`}
-                                title="Opciones de subetiqueta"
-                              >
-                                <MoreVertical className="w-3 h-3" />
-                              </span>
-                              <span
-                                className={`text-[10.5px] ${
-                                  childActive ? 'text-white/80' : 'text-[#8A8478]'
-                                }`}
-                              >
-                                {childCount}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Formulario para añadir subetiqueta de nivel 2 */}
-                        {addingSubtagForId === child.id && (
-                          <form
-                            onSubmit={(e) => handleCreateSubtag(child.id, child.color, e)}
-                            className="ml-9 mr-1 my-1 p-2 bg-white rounded-lg border border-[#E4DECE] shadow-xs"
-                          >
-                            <div className="flex items-center gap-1.5 mb-1.5">
-                              <span
-                                className="w-1.5 h-1.5 rounded-full shrink-0"
-                                style={{ backgroundColor: desaturateColor(child.color, 0.3) }}
-                              />
-                              <span className="text-[10px] text-[#8A8478] font-medium">
-                                Nueva subetiqueta de {child.name}
-                              </span>
-                            </div>
-                            <input
-                              type="text"
-                              value={subtagName}
-                              onChange={(e) => setSubtagName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleCreateSubtag(child.id, child.color, e);
-                                } else if (e.key === 'Escape') {
-                                  setAddingSubtagForId(null);
-                                  setSubtagName('');
-                                }
-                              }}
-                              placeholder="Nombre subetiqueta (Enter para guardar)"
-                              autoFocus
-                              className="w-full text-xs px-2 py-1 bg-[#F7F4EE] rounded border border-[#E4DECE] outline-none text-[#2B2A28] mb-2"
-                            />
-                            <div className="flex justify-end gap-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAddingSubtagForId(null);
-                                  setSubtagName('');
-                                }}
-                                className="text-[10px] px-1.5 py-0.5 text-[#8A8478] hover:text-[#2B2A28] cursor-pointer"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                type="submit"
-                                className="text-[10px] px-2 py-0.5 bg-[#3F6E64] text-white rounded font-medium cursor-pointer"
-                              >
-                                Guardar
-                              </button>
-                            </div>
-                          </form>
-                        )}
-
-                        {/* Subetiquetas de nivel 2 (nietas) */}
-                        {grandChildren.map((grandChild: Tag) => {
-                          const grandChildActive = isFilterActive({
-                            type: 'tag',
-                            tagId: grandChild.id,
-                            tagName: grandChild.name,
-                          });
-                          const grandChildCount = getExactTagCount(grandChild.name);
-                          const grandChildBg = desaturateColor(grandChild.color, 0.3);
-                          const { isDraggingThis, ...grandChildDragHandlers } =
-                            getTagDragProps(grandChild);
-
-                          return (
-                            <div
-                              key={grandChild.id}
-                              {...grandChildDragHandlers}
-                              onContextMenu={(e) => openContextMenu(e, 'tag', grandChild)}
-                              onClick={() => {
-                                if (dragOccurredRef.current) return;
-                                onSelectFilter({
-                                  type: 'tag',
-                                  tagId: grandChild.id,
-                                  tagName: grandChild.name,
-                                });
-                              }}
-                              className={`w-full flex items-center justify-between pl-11 pr-3 py-1.5 rounded-lg text-[11px] font-medium transition-all group cursor-pointer ${
-                                grandChildActive
-                                  ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
-                                  : 'hover:bg-black/5 text-[#2B2A28]'
-                              } ${
-                                isDraggingThis
-                                  ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
-                                  : ''
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span
-                                  className="w-1.5 h-1.5 rounded-full shrink-0 shadow-xs"
-                                  style={{ backgroundColor: grandChildBg }}
-                                />
-                                <span className="truncate">{grandChild.name}</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <span
-                                  role="button"
-                                  tabIndex={0}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openContextMenu(e, 'tag', grandChild);
-                                  }}
-                                  className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                    grandChildActive
-                                      ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                      : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                  }`}
-                                  title="Opciones de subetiqueta"
-                                >
-                                  <MoreVertical className="w-3 h-3" />
-                                </span>
-                                <span
-                                  className={`text-[10px] ${
-                                    grandChildActive ? 'text-white/80' : 'text-[#8A8478]'
-                                  }`}
-                                >
-                                  {grandChildCount}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+            {rootTags.map((rootTag: Tag) => renderTagItem(rootTag, 0, false))}
           </div>
 
           {/* Formulario rápido para añadir etiqueta */}
@@ -1554,12 +1089,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <option value="">Principal (sin padre)</option>
                   {tags
-                    .filter((t) => t.id !== 'sin-etiqueta' && !t.archived && getTagDepth(t.id, tags) < 2)
+                    .filter((t) => t.id !== 'sin-etiqueta' && !t.archived)
                     .map((t) => {
                       const depth = getTagDepth(t.id, tags);
+                      const prefix = depth === 0 ? '' : `${'  '.repeat(depth)}↳ `;
                       return (
                         <option key={t.id} value={t.id}>
-                          {depth === 0 ? `Subetiqueta de ${t.name}` : `  ↳ Subetiqueta (nivel 2) de ${t.name}`}
+                          {depth === 0
+                            ? `Subetiqueta de ${t.name}`
+                            : `${prefix}Subetiqueta (nivel ${depth + 1}) de ${t.name}`}
                         </option>
                       );
                     })}
@@ -1731,10 +1269,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       style={{
                         backgroundColor: depth === 0
                           ? tag.color
-                          : desaturateColor(tag.color, depth === 1 ? 0.55 : 0.3),
+                          : desaturateColor(tag.color, Math.min(0.65, 0.25 + depth * 0.15)),
                       }}
                     />
                     <span className="truncate">{tag.name}</span>
+                    {depth > 0 && (
+                      <span className="text-[9px] text-[#8A8478] font-normal lowercase">
+                        (nivel {depth})
+                      </span>
+                    )}
                   </div>
 
                   {/* Si está archivada: botón Desarchivar */}
@@ -1748,8 +1291,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Añadir subetiqueta (permitido en nivel 0 y nivel 1) */}
-                  {!tag.archived && tag.id !== 'sin-etiqueta' && depth < 2 && (
+                  {/* Añadir subetiqueta (permitido en cualquier nivel) */}
+                  {!tag.archived && tag.id !== 'sin-etiqueta' && (
                     <button
                       onClick={() => {
                         const tagId = tag.id;
@@ -1760,7 +1303,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
                     >
                       <CornerDownRight className="w-3.5 h-3.5 text-[#3F6E64]" />
-                      <span>{depth === 0 ? 'Añadir subetiqueta' : 'Añadir subetiqueta de 2º nivel'}</span>
+                      <span>Añadir subetiqueta</span>
                     </button>
                   )}
 
@@ -1778,8 +1321,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es subetiqueta de 2º nivel: Subir a nivel 1 */}
-                  {!tag.archived && depth === 2 && grandparentTag && (
+                  {/* Si tiene abuelo (profundidad >= 2): Subir a nivel de abuelo */}
+                  {!tag.archived && grandparentTag && (
                     <button
                       onClick={() => handleMoveTag(tag, grandparentTag.id)}
                       className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] transition-colors text-left cursor-pointer"
@@ -1789,7 +1332,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                   )}
 
-                  {/* Si es subetiqueta (nivel 1 o 2): Convertir en principal */}
+                  {/* Si es subetiqueta (nivel > 0): Convertir en principal */}
                   {!tag.archived && depth > 0 && (
                     <button
                       onClick={() => handleMoveTag(tag, null)}
@@ -1856,15 +1399,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Modal para mover etiqueta dentro de otra */}
       {movingTag && (() => {
-        const movingSubtreeDepth = getMaxSubtreeDepth(movingTag.id, tags);
         const movingDescendants = getDescendantTags(movingTag.id, tags);
         const candidateParents = tags.filter((t) => {
           if (t.id === movingTag.id) return false;
           if (t.id === 'sin-etiqueta' || t.archived) return false;
           if (movingDescendants.some((d) => d.id === t.id)) return false;
-          const parentDepth = getTagDepth(t.id, tags);
-          if (parentDepth >= 2) return false;
-          if (parentDepth + 1 + movingSubtreeDepth > 2) return false;
           return true;
         });
 
@@ -1908,23 +1447,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         key={t.id}
                         onClick={() => handleMoveTag(movingTag, t.id)}
-                        className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg hover:bg-[#F7F4EE] border border-transparent hover:border-[#E4DECE] text-left cursor-pointer transition-colors ${
-                          depth === 1 ? 'pl-6' : ''
-                        }`}
+                        style={{ paddingLeft: `${10 + depth * 14}px` }}
+                        className="w-full flex items-center justify-between gap-2 pr-2.5 py-2 rounded-lg hover:bg-[#F7F4EE] border border-transparent hover:border-[#E4DECE] text-left cursor-pointer transition-colors"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <span
-                            className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                            className="rounded-full shrink-0 shadow-xs"
                             style={{
-                              backgroundColor: depth === 0 ? t.color : desaturateColor(t.color, 0.55),
+                              width: depth === 0 ? '10px' : '8px',
+                              height: depth === 0 ? '10px' : '8px',
+                              backgroundColor:
+                                depth === 0
+                                  ? t.color
+                                  : desaturateColor(
+                                      t.color,
+                                      Math.min(0.65, 0.25 + depth * 0.15)
+                                    ),
                             }}
                           />
-                          <span className="font-medium text-xs">
-                            {depth === 1 ? `↳ ${t.name}` : t.name}
+                          <span className="font-medium text-xs truncate">
+                            {depth > 0 ? `↳ ${t.name}` : t.name}
                           </span>
                         </div>
-                        <span className="text-[10px] text-[#8A8478] italic">
-                          {depth === 0 ? 'Raíz' : 'Nivel 1'}
+                        <span className="text-[10px] text-[#8A8478] italic shrink-0">
+                          {depth === 0 ? 'Raíz' : `Nivel ${depth}`}
                         </span>
                       </button>
                     );
