@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -130,6 +131,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [addingSubtagForId, setAddingSubtagForId] = useState<string | null>(null);
   const [subtagName, setSubtagName] = useState('');
   const [movingTag, setMovingTag] = useState<Tag | null>(null);
+
+  // Cerrar menú contextual al hacer clic fuera o en cualquier otra columna
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.sidebar-context-menu')) return;
+      setContextMenu(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('contextmenu', handleOutsideClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('contextmenu', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu]);
 
   // Estados para Drag & Drop de etiquetas
   const [draggedTagId, setDraggedTagId] = useState<string | null>(null);
@@ -1238,23 +1261,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Context Menu Popup */}
-      {contextMenu && (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-transparent"
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setContextMenu(null);
-            }}
-          />
-          <div
-            className="fixed z-50 bg-white border border-[#E4DECE] rounded-xl shadow-xl py-1.5 px-1 min-w-[170px] text-xs text-[#2B2A28]"
-            style={{
-              left: `${contextMenu.x}px`,
-              top: `${contextMenu.y}px`,
-            }}
-          >
+      {contextMenu &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-50 bg-transparent"
+              onClick={() => setContextMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu(null);
+              }}
+            />
+            <div
+              className="sidebar-context-menu fixed z-50 bg-white border border-[#E4DECE] rounded-xl shadow-xl py-1.5 px-1 min-w-[170px] text-xs text-[#2B2A28]"
+              style={{
+                left: `${contextMenu.x}px`,
+                top: `${contextMenu.y}px`,
+              }}
+            >
             {contextMenu.type === 'tag' && contextMenu.tag && (() => {
               const tag = contextMenu.tag!;
               const depth = getTagDepth(tag.id, tags);
@@ -1394,11 +1418,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </>
             )}
           </div>
-        </>
+        </>,
+        document.body
       )}
 
       {/* Modal para mover etiqueta dentro de otra */}
-      {movingTag && (() => {
+      {movingTag &&
+        createPortal(
+          (() => {
         const movingDescendants = getDescendantTags(movingTag.id, tags);
         const candidateParents = tags.filter((t) => {
           if (t.id === movingTag.id) return false;
@@ -1489,7 +1516,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         );
-      })()}
+      })(),
+      document.body
+    )}
     </aside>
   );
 };

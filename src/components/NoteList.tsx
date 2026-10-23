@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   db,
@@ -53,6 +54,32 @@ export const NoteList: React.FC<NoteListProps> = ({
   }
   const [contextMenu, setContextMenu] = useState<NoteContextMenuInfo | null>(null);
   const [isSubmenuOpen, setIsSubmenuOpen] = useState(false);
+
+  // Cerrar menú contextual al hacer clic fuera o en cualquier otra columna
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.notelist-context-menu')) return;
+      setContextMenu(null);
+      setIsSubmenuOpen(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setIsSubmenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('contextmenu', handleOutsideClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('contextmenu', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu]);
 
   const handleOpenContextMenu = (e: React.MouseEvent, note: Note) => {
     e.preventDefault();
@@ -398,27 +425,28 @@ export const NoteList: React.FC<NoteListProps> = ({
       </div>
 
       {/* Menú contextual de nota */}
-      {contextMenu && (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-transparent"
-            onClick={() => {
-              setContextMenu(null);
-              setIsSubmenuOpen(false);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setContextMenu(null);
-              setIsSubmenuOpen(false);
-            }}
-          />
-          <div
-            className="fixed z-50 bg-white border border-[#E4DECE] rounded-xl shadow-xl py-1.5 px-1 min-w-[190px] text-xs text-[#2B2A28]"
-            style={{
-              left: `${contextMenu.x}px`,
-              top: `${contextMenu.y}px`,
-            }}
-          >
+      {contextMenu &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-50 bg-transparent"
+              onClick={() => {
+                setContextMenu(null);
+                setIsSubmenuOpen(false);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu(null);
+                setIsSubmenuOpen(false);
+              }}
+            />
+            <div
+              className="notelist-context-menu fixed z-50 bg-white border border-[#E4DECE] rounded-xl shadow-xl py-1.5 px-1 min-w-[190px] text-xs text-[#2B2A28]"
+              style={{
+                left: `${contextMenu.x}px`,
+                top: `${contextMenu.y}px`,
+              }}
+            >
             <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8A8478] tracking-wider border-b border-[#E4DECE]/50 mb-1 truncate max-w-[200px]">
               {contextMenu.note.title || 'Nota sin título'}
             </div>
@@ -500,7 +528,8 @@ export const NoteList: React.FC<NoteListProps> = ({
               <span>{contextMenu.note.deleted ? 'Eliminar definitivamente' : 'Eliminar nota'}</span>
             </button>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );

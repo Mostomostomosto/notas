@@ -338,8 +338,8 @@ export const App: React.FC = () => {
     <div className="flex h-screen w-screen bg-[#F7F4EE] text-[#2B2A28] overflow-hidden font-sans select-none">
       {/* 1. Barra Lateral Izquierda (Escritorio y Drawer Móvil) */}
       <div
-        className={`fixed inset-y-0 left-0 z-40 transform md:relative md:translate-x-0 transition-transform duration-200 ease-in-out flex-shrink-0 ${
-          isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        className={`fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-in-out flex-shrink-0 md:relative md:transform-none ${
+          isMobileSidebarOpen ? 'transform translate-x-0' : 'transform -translate-x-full md:transform-none'
         }`}
       >
         <Sidebar
