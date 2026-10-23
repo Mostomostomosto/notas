@@ -1276,6 +1276,11 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const bubbleColorBtnRef = useRef<HTMLButtonElement>(null);
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#3F6E64');
+  const [newTagParentId, setNewTagParentId] = useState('');
+  const newTagInputRef = useRef<HTMLInputElement>(null);
 
   const [floatingBubble, setFloatingBubble] = useState<{
     visible: boolean;
@@ -1352,6 +1357,9 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   // Sincronizar si cambia la nota seleccionada o si llega una actualización externa
   useEffect(() => {
     setIsTagDropdownOpen(false);
+    setIsCreatingTag(false);
+    setNewTagName('');
+    setNewTagParentId('');
     if (note) {
       if (!localNote || note.id !== localNote.id || (!pendingSaveRef.current && note.updatedAt !== localNote.updatedAt)) {
         setLocalNote(note);
@@ -1360,6 +1368,24 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       setLocalNote(null);
     }
   }, [note]);
+
+  useEffect(() => {
+    if (isCreatingTag) {
+      const timer = setTimeout(() => {
+        newTagInputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isCreatingTag]);
+
+  useEffect(() => {
+    if (!isTagDropdownOpen) {
+      setIsCreatingTag(false);
+      setNewTagName('');
+      setNewTagParentId('');
+    }
+  }, [isTagDropdownOpen]);
+
 
   // Datos del elemento activo en el Lightbox
   const activeGalleryBlock = localNote?.blocks.find(
@@ -1741,6 +1767,46 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       updatedAt: new Date().toISOString(),
     };
     saveChangesImmediate(updated);
+  };
+
+  // Crear nueva etiqueta y asignarla inmediatamente a la nota
+  const handleCreateTag = async () => {
+    const cleanName = newTagName.trim();
+    if (!cleanName || !localNote) return;
+
+    const existing = tags.find((t: Tag) => t.name.toLowerCase() === cleanName.toLowerCase());
+    if (existing) {
+      handleSelectTag(existing.name);
+      setIsCreatingTag(false);
+      setNewTagName('');
+      setNewTagParentId('');
+      setIsTagDropdownOpen(false);
+      return;
+    }
+
+    const tagId = newTagParentId
+      ? `${newTagParentId}-${cleanName.toLowerCase().replace(/\s+/g, '-')}`
+      : cleanName.toLowerCase().replace(/\s+/g, '-');
+
+    const parentTag = newTagParentId ? tags.find((t: Tag) => t.id === newTagParentId) : null;
+    const finalColor = parentTag ? parentTag.color : newTagColor;
+
+    await db.tags.put({
+      id: tagId,
+      name: cleanName,
+      color: finalColor,
+      ...(newTagParentId ? { parentId: newTagParentId } : {}),
+    });
+
+    if (token) {
+      scheduleSync(token);
+    }
+
+    handleSelectTag(cleanName);
+    setIsCreatingTag(false);
+    setNewTagName('');
+    setNewTagParentId('');
+    setIsTagDropdownOpen(false);
   };
 
   // Mover a papelera o restaurar
@@ -2772,69 +2838,173 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
               {/* Dropdown de etiquetas */}
               {isTagDropdownOpen && (
-                <div className="absolute right-0 top-full pt-1 z-50 min-w-[190px]">
-                  <div className="bg-white border border-[#E4DECE] rounded-xl shadow-xl p-1.5 max-h-64 overflow-y-auto">
-                    {/* Opción Sin etiqueta */}
-                    <button
-                      type="button"
-                      onClick={() => handleSelectTag('')}
-                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-left cursor-pointer transition-colors ${
-                        !localNote.tag
-                          ? 'font-semibold text-[#2B2A28] bg-[#F7F4EE]/60'
-                          : 'text-[#8A8478]'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full border border-dashed border-[#8A8478] shrink-0" />
-                      <span>Sin etiqueta</span>
-                    </button>
+                <div className="absolute right-0 top-full pt-1 z-50 min-w-[210px] w-64">
+                  <div className="bg-white border border-[#E4DECE] rounded-xl shadow-xl overflow-hidden flex flex-col">
+                    {/* Lista scrollable de etiquetas */}
+                    <div className="p-1.5 max-h-56 overflow-y-auto">
+                      {/* Opción Sin etiqueta */}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectTag('')}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-left cursor-pointer transition-colors ${
+                          !localNote.tag
+                            ? 'font-semibold text-[#2B2A28] bg-[#F7F4EE]/60'
+                            : 'text-[#8A8478]'
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full border border-dashed border-[#8A8478] shrink-0" />
+                        <span>Sin etiqueta</span>
+                      </button>
 
-                    <div className="my-1 border-t border-[#E4DECE]/60" />
+                      <div className="my-1 border-t border-[#E4DECE]/60" />
 
-                    {(() => {
-                      const renderTagOption = (tagItem: Tag, depth: number = 0): React.ReactNode => {
-                        const children = tags.filter(
-                          (c: Tag) => c.parentId === tagItem.id && !c.archived
-                        );
-                        const isSelected = localNote.tag === tagItem.name;
-                        return (
-                          <div key={tagItem.id}>
-                            <button
-                              type="button"
-                              onClick={() => handleSelectTag(tagItem.name)}
-                              className={`w-full flex items-center gap-2 py-1.5 pr-2.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer transition-colors ${
-                                isSelected ? 'bg-[#F7F4EE] font-semibold' : ''
-                              }`}
-                              style={{ paddingLeft: `${10 + depth * 12}px` }}
-                            >
-                              <span
-                                className="rounded-full shrink-0"
-                                style={{
-                                  width: depth === 0 ? '8px' : '6px',
-                                  height: depth === 0 ? '8px' : '6px',
-                                  backgroundColor:
-                                    depth === 0
-                                      ? tagItem.color
-                                      : desaturateColor(
-                                          tagItem.color,
-                                          Math.min(0.65, 0.25 + depth * 0.15)
-                                        ),
-                                }}
-                              />
-                              <span
-                                className={depth === 0 ? 'font-medium' : 'text-[11.5px]'}
+                      {(() => {
+                        const renderTagOption = (tagItem: Tag, depth: number = 0): React.ReactNode => {
+                          const children = tags.filter(
+                            (c: Tag) => c.parentId === tagItem.id && !c.archived
+                          );
+                          const isSelected = localNote.tag === tagItem.name;
+                          return (
+                            <div key={tagItem.id}>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectTag(tagItem.name)}
+                                className={`w-full flex items-center gap-2 py-1.5 pr-2.5 text-xs rounded-lg hover:bg-[#F7F4EE] text-[#2B2A28] text-left cursor-pointer transition-colors ${
+                                  isSelected ? 'bg-[#F7F4EE] font-semibold' : ''
+                                }`}
+                                style={{ paddingLeft: `${10 + depth * 12}px` }}
                               >
-                                {tagItem.name}
-                              </span>
-                            </button>
-                            {children.map((child: Tag) => renderTagOption(child, depth + 1))}
-                          </div>
-                        );
-                      };
+                                <span
+                                  className="rounded-full shrink-0"
+                                  style={{
+                                    width: depth === 0 ? '8px' : '6px',
+                                    height: depth === 0 ? '8px' : '6px',
+                                    backgroundColor:
+                                      depth === 0
+                                        ? tagItem.color
+                                        : desaturateColor(
+                                            tagItem.color,
+                                            Math.min(0.65, 0.25 + depth * 0.15)
+                                          ),
+                                  }}
+                                />
+                                <span
+                                  className={depth === 0 ? 'font-medium' : 'text-[11.5px]'}
+                                >
+                                  {tagItem.name}
+                                </span>
+                              </button>
+                              {children.map((child: Tag) => renderTagOption(child, depth + 1))}
+                            </div>
+                          );
+                        };
 
-                      return tags
-                        .filter((t: Tag) => !t.parentId && !t.archived)
-                        .map((rootTag: Tag) => renderTagOption(rootTag, 0));
-                    })()}
+                        return tags
+                          .filter((t: Tag) => !t.parentId && !t.archived)
+                          .map((rootTag: Tag) => renderTagOption(rootTag, 0));
+                      })()}
+                    </div>
+
+                    {/* Pie del desplegable: Nueva etiqueta */}
+                    <div className="border-t border-[#E4DECE] bg-[#FAF8F5] p-2">
+                      {!isCreatingTag ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsCreatingTag(true);
+                          }}
+                          className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-[#3F6E64] hover:bg-[#3F6E64]/10 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Nueva etiqueta</span>
+                        </button>
+                      ) : (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleCreateTag();
+                          }}
+                          className="space-y-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            ref={newTagInputRef}
+                            type="text"
+                            placeholder="Nombre de etiqueta..."
+                            value={newTagName}
+                            onChange={(e) => setNewTagName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') {
+                                e.stopPropagation();
+                                setIsCreatingTag(false);
+                              }
+                            }}
+                            className="w-full px-2.5 py-1 text-xs bg-white border border-[#E4DECE] rounded-lg focus:outline-none focus:border-[#3F6E64] text-[#2B2A28]"
+                            autoFocus
+                          />
+
+                          {tags.filter((t: Tag) => !t.archived).length > 0 && (
+                            <select
+                              value={newTagParentId}
+                              onChange={(e) => setNewTagParentId(e.target.value)}
+                              className="w-full px-2 py-1 text-[11px] bg-white border border-[#E4DECE] rounded-lg focus:outline-none focus:border-[#3F6E64] text-[#2B2A28]"
+                            >
+                              <option value="">(Sin etiqueta padre / Raíz)</option>
+                              {tags
+                                .filter((t: Tag) => !t.archived)
+                                .map((t: Tag) => (
+                                  <option key={t.id} value={t.id}>
+                                    Hija de: {t.name}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+
+                          <div className="flex items-center justify-between pt-0.5">
+                            {!newTagParentId ? (
+                              <div className="flex items-center gap-1">
+                                {['#3F6E64', '#B4553F', '#C98A3D', '#5B7DB1', '#7A68A6'].map((c) => (
+                                  <button
+                                    key={c}
+                                    type="button"
+                                    onClick={() => setNewTagColor(c)}
+                                    className={`w-3.5 h-3.5 rounded-full transition-transform cursor-pointer ${
+                                      newTagColor === c ? 'scale-125 ring-1 ring-offset-1 ring-[#2B2A28]' : 'hover:scale-110'
+                                    }`}
+                                    style={{ backgroundColor: c }}
+                                    title={c}
+                                  />
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-[#8A8478] italic">Hereda color</span>
+                            )}
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsCreatingTag(false);
+                                  setNewTagName('');
+                                  setNewTagParentId('');
+                                }}
+                                className="px-2 py-0.5 text-[11px] text-[#8A8478] hover:text-[#2B2A28] rounded cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={!newTagName.trim()}
+                                className="px-2.5 py-0.5 text-[11px] bg-[#3F6E64] hover:bg-[#345b53] disabled:opacity-50 text-white font-medium rounded-md transition-colors cursor-pointer"
+                              >
+                                Crear
+                              </button>
+                            </div>
+                          </div>
+                        </form>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
