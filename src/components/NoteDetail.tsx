@@ -120,7 +120,7 @@ export function escapeRegExp(string: string): string {
 export function replaceNthOccurrence(
   str: string,
   regex: RegExp,
-  replacement: string,
+  replacement: string | ((match: string) => string),
   targetIndex: number = 0
 ): string {
   let count = 0;
@@ -129,13 +129,103 @@ export function replaceNthOccurrence(
     if (count === targetIndex) {
       hasReplaced = true;
       count++;
-      return replacement;
+      return typeof replacement === 'function' ? replacement(match) : replacement;
     }
     count++;
     return match;
   });
-  if (!hasReplaced && count > 0) return str.replace(regex, replacement);
+  if (!hasReplaced && count > 0) {
+    let once = false;
+    return str.replace(regex, (match) => {
+      if (!once) {
+        once = true;
+        return typeof replacement === 'function' ? replacement(match) : replacement;
+      }
+      return match;
+    });
+  }
   return result;
+}
+
+export function buildFlexibleRegex(text: string): RegExp | null {
+  const clean = text.trim();
+  if (!clean) return null;
+
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+
+  const lead = '(?:<span[^>]*>|[\\*_~`])*';
+  const trail = '(?:<\\/span>|[\\*_~`])*';
+  const sep = '(?:\\s+|[\\*_~`]|<[^>]+>|\\]\\([^)]*\\)|\\[)+';
+
+  if (words.length === 1) {
+    const w = escapeRegExp(words[0]);
+    const pattern = `${lead}${w}${trail}`;
+    return new RegExp(pattern, 'gi');
+  }
+
+  const pattern = `${lead}${words.map((w) => escapeRegExp(w)).join(sep)}${trail}`;
+  return new RegExp(pattern, 'gi');
+}
+
+export function findMatchInContent(content: string, selectedText: string): RegExp | null {
+  const clean = selectedText.trim();
+  if (!clean || !content) return null;
+
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+
+  // 1. Flexible regex allowing markdown delimiters, soft wraps and HTML tags between words
+  const flexRegex = buildFlexibleRegex(clean);
+  if (flexRegex && flexRegex.test(content)) {
+    flexRegex.lastIndex = 0;
+    return flexRegex;
+  }
+
+  // 2. Whitespace-normalized regex
+  const wsPattern = words.map((w) => escapeRegExp(w)).join('\\s+');
+  const wsRegex = new RegExp(wsPattern, 'gi');
+  if (wsRegex.test(content)) {
+    wsRegex.lastIndex = 0;
+    return wsRegex;
+  }
+
+  // 3. Anchor fallback for long selections / entire paragraphs (first 3 words ... last 3 words)
+  if (words.length >= 6) {
+    const startWords = words.slice(0, 3).map((w) => escapeRegExp(w)).join('(?:\\s+|[\\*_~`]|<[^>]+>)+');
+    const endWords = words.slice(-3).map((w) => escapeRegExp(w)).join('(?:\\s+|[\\*_~`]|<[^>]+>)+');
+    const anchorRegex = new RegExp(`${startWords}[\\s\\S]*?${endWords}`, 'gi');
+    if (anchorRegex.test(content)) {
+      anchorRegex.lastIndex = 0;
+      return anchorRegex;
+    }
+  }
+
+  // 4. Exact regex fallback
+  const exactRegex = new RegExp(escapeRegExp(clean), 'gi');
+  if (exactRegex.test(content)) {
+    exactRegex.lastIndex = 0;
+    return exactRegex;
+  }
+
+  return null;
+}
+
+export function getOccurrenceIndex(containerEl: HTMLElement | null | undefined, selText: string): number {
+  const sel = window.getSelection();
+  if (!containerEl || !sel || sel.rangeCount === 0 || !selText) return 0;
+  try {
+    const range = sel.getRangeAt(0);
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(containerEl);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const precedingText = preRange.toString();
+    const regex = findMatchInContent(precedingText, selText);
+    const matches = regex ? precedingText.match(regex) : null;
+    return matches ? matches.length : 0;
+  } catch (_) {
+    return 0;
+  }
 }
 
 export function applyFormatToMarkdownContent(
@@ -148,61 +238,82 @@ export function applyFormatToMarkdownContent(
   const cleanSel = selectedText.trim();
   if (!cleanSel || !content) return content;
 
-  const escaped = escapeRegExp(cleanSel);
+  const regex = findMatchInContent(content, cleanSel);
+  if (!regex) return content;
+
+  if (format === 'color') {
+    const hex = colorHex || '#3F6E64';
+    return replaceNthOccurrence(
+      content,
+      regex,
+      (matchedMarkdown) => {
+        const parts = matchedMarkdown.split(/(\r?\n\s*\r?\n)/);
+        return parts
+          .map((part) => {
+            if (/^\r?\n\s*\r?\n$/.test(part) || !part.trim()) return part;
+            const stripped = part.replace(/<span style="color:\s*[^"]+">([\s\S]*?)<\/span>/gi, '$1');
+            return `<span style="color: ${hex}">${stripped}</span>`;
+          })
+          .join('');
+      },
+      occurrenceIndex
+    );
+  }
 
   if (format === 'bold') {
-    const boldRegex = new RegExp(`\\*\\*${escaped}\\*\\*`, 'g');
-    if (boldRegex.test(content)) {
-      return replaceNthOccurrence(content, boldRegex, cleanSel, occurrenceIndex);
-    }
-    const plainRegex = new RegExp(escaped, 'g');
-    if (plainRegex.test(content)) {
-      return replaceNthOccurrence(content, plainRegex, `**${cleanSel}**`, occurrenceIndex);
-    }
-  } else if (format === 'italic') {
-    const italicRegex = new RegExp(`(?<!\\*)\\*${escaped}\\*(?!\\*)`, 'g');
-    if (italicRegex.test(content)) {
-      return replaceNthOccurrence(content, italicRegex, cleanSel, occurrenceIndex);
-    }
-    const plainRegex = new RegExp(escaped, 'g');
-    if (plainRegex.test(content)) {
-      return replaceNthOccurrence(content, plainRegex, `*${cleanSel}*`, occurrenceIndex);
-    }
-  } else if (format === 'color') {
-    const hex = colorHex || '#3F6E64';
-    const colorRegex = new RegExp(`<span style="color:\\s*[^"]+">\\s*${escaped}\\s*<\\/span>`, 'gi');
-    if (colorRegex.test(content)) {
-      return replaceNthOccurrence(
-        content,
-        colorRegex,
-        `<span style="color: ${hex}">${cleanSel}</span>`,
-        occurrenceIndex
-      );
-    }
-    const plainRegex = new RegExp(escaped, 'g');
-    if (plainRegex.test(content)) {
-      return replaceNthOccurrence(
-        content,
-        plainRegex,
-        `<span style="color: ${hex}">${cleanSel}</span>`,
-        occurrenceIndex
-      );
-    }
-  } else if (format === 'clear') {
-    let res = content;
-    const colorRegex = new RegExp(`<span style="color:\\s*[^"]+">\\s*${escaped}\\s*<\\/span>`, 'gi');
-    if (colorRegex.test(res)) {
-      res = replaceNthOccurrence(res, colorRegex, cleanSel, occurrenceIndex);
-    }
-    const boldRegex = new RegExp(`\\*\\*${escaped}\\*\\*`, 'g');
-    if (boldRegex.test(res)) {
-      res = replaceNthOccurrence(res, boldRegex, cleanSel, occurrenceIndex);
-    }
-    const italicRegex = new RegExp(`(?<!\\*)\\*${escaped}\\*(?!\\*)`, 'g');
-    if (italicRegex.test(res)) {
-      res = replaceNthOccurrence(res, italicRegex, cleanSel, occurrenceIndex);
-    }
-    return res;
+    return replaceNthOccurrence(
+      content,
+      regex,
+      (matchedMarkdown) => {
+        const parts = matchedMarkdown.split(/(\r?\n\s*\r?\n)/);
+        return parts
+          .map((part) => {
+            if (/^\r?\n\s*\r?\n$/.test(part) || !part.trim()) return part;
+            const trimmed = part.trim();
+            if (/^(\*\*|__)([\s\S]*?)\1$/.test(trimmed)) {
+              return part.replace(/^(\*\*|__)([\s\S]*?)\1$/, '$2');
+            }
+            return `**${part}**`;
+          })
+          .join('');
+      },
+      occurrenceIndex
+    );
+  }
+
+  if (format === 'italic') {
+    return replaceNthOccurrence(
+      content,
+      regex,
+      (matchedMarkdown) => {
+        const parts = matchedMarkdown.split(/(\r?\n\s*\r?\n)/);
+        return parts
+          .map((part) => {
+            if (/^\r?\n\s*\r?\n$/.test(part) || !part.trim()) return part;
+            const trimmed = part.trim();
+            if (/^(\*|_)([\s\S]*?)\1$/.test(trimmed)) {
+              return part.replace(/^(\*|_)([\s\S]*?)\1$/, '$2');
+            }
+            return `*${part}*`;
+          })
+          .join('');
+      },
+      occurrenceIndex
+    );
+  }
+
+  if (format === 'clear') {
+    return replaceNthOccurrence(
+      content,
+      regex,
+      (matchedMarkdown) => {
+        let res = matchedMarkdown.replace(/<span style="color:\s*[^"]+">([\s\S]*?)<\/span>/gi, '$1');
+        res = res.replace(/(\*\*|__)([\s\S]*?)\1/g, '$2');
+        res = res.replace(/(\*|_)([\s\S]*?)\1/g, '$2');
+        return res;
+      },
+      occurrenceIndex
+    );
   }
 
   return content;
@@ -713,18 +824,7 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
       return;
     }
 
-    let occurrenceIndex = 0;
-    if (previewRef.current && sel && sel.rangeCount > 0) {
-      try {
-        const range = sel.getRangeAt(0);
-        const preRange = range.cloneRange();
-        preRange.selectNodeContents(previewRef.current);
-        preRange.setEnd(range.startContainer, range.startOffset);
-        const precedingText = preRange.toString();
-        const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
-        occurrenceIndex = matches ? matches.length : 0;
-      } catch (_) {}
-    }
+    const occurrenceIndex = getOccurrenceIndex(previewRef.current, selText);
 
     const nextVal = applyFormatToMarkdownContent(block.content, selText, fmt, color, occurrenceIndex);
     onUpdateContent(nextVal);
@@ -2286,18 +2386,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       const selText = sel ? sel.toString().trim() : '';
       const block = localNote?.blocks?.find((b) => b.id === target.blockId);
       if (block && block.type === 'markdown' && selText) {
-        let occIndex = 0;
-        if (target.element && sel && sel.rangeCount > 0) {
-          try {
-            const range = sel.getRangeAt(0);
-            const preRange = range.cloneRange();
-            preRange.selectNodeContents(target.element);
-            preRange.setEnd(range.startContainer, range.startOffset);
-            const precedingText = preRange.toString();
-            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
-            occIndex = matches ? matches.length : 0;
-          } catch (_) {}
-        }
+        const occIndex = getOccurrenceIndex(target.element, selText);
         const newVal = applyFormatToMarkdownContent(block.content, selText, 'bold', undefined, occIndex);
         handleUpdateBlockContent(target.blockId, newVal);
         return;
@@ -2333,18 +2422,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       const selText = sel ? sel.toString().trim() : '';
       const block = localNote?.blocks?.find((b) => b.id === target.blockId);
       if (block && block.type === 'markdown' && selText) {
-        let occIndex = 0;
-        if (target.element && sel && sel.rangeCount > 0) {
-          try {
-            const range = sel.getRangeAt(0);
-            const preRange = range.cloneRange();
-            preRange.selectNodeContents(target.element);
-            preRange.setEnd(range.startContainer, range.startOffset);
-            const precedingText = preRange.toString();
-            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
-            occIndex = matches ? matches.length : 0;
-          } catch (_) {}
-        }
+        const occIndex = getOccurrenceIndex(target.element, selText);
         const newVal = applyFormatToMarkdownContent(block.content, selText, 'italic', undefined, occIndex);
         handleUpdateBlockContent(target.blockId, newVal);
         return;
@@ -2384,18 +2462,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       const selText = sel ? sel.toString().trim() : '';
       const block = localNote?.blocks?.find((b) => b.id === target.blockId);
       if (block && block.type === 'markdown' && selText) {
-        let occIndex = 0;
-        if (target.element && sel && sel.rangeCount > 0) {
-          try {
-            const range = sel.getRangeAt(0);
-            const preRange = range.cloneRange();
-            preRange.selectNodeContents(target.element);
-            preRange.setEnd(range.startContainer, range.startOffset);
-            const precedingText = preRange.toString();
-            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
-            occIndex = matches ? matches.length : 0;
-          } catch (_) {}
-        }
+        const occIndex = getOccurrenceIndex(target.element, selText);
         const newVal = applyFormatToMarkdownContent(block.content, selText, 'color', colorHex, occIndex);
         handleUpdateBlockContent(target.blockId, newVal);
         return;
@@ -2434,18 +2501,7 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       const selText = sel ? sel.toString().trim() : '';
       const block = localNote?.blocks?.find((b) => b.id === target.blockId);
       if (block && block.type === 'markdown' && selText) {
-        let occIndex = 0;
-        if (target.element && sel && sel.rangeCount > 0) {
-          try {
-            const range = sel.getRangeAt(0);
-            const preRange = range.cloneRange();
-            preRange.selectNodeContents(target.element);
-            preRange.setEnd(range.startContainer, range.startOffset);
-            const precedingText = preRange.toString();
-            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
-            occIndex = matches ? matches.length : 0;
-          } catch (_) {}
-        }
+        const occIndex = getOccurrenceIndex(target.element, selText);
         const newVal = applyFormatToMarkdownContent(block.content, selText, 'clear', undefined, occIndex);
         handleUpdateBlockContent(target.blockId, newVal);
         return;
