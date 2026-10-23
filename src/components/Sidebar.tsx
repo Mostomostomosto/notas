@@ -82,6 +82,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [subtagName, setSubtagName] = useState('');
   const [movingTag, setMovingTag] = useState<Tag | null>(null);
 
+  // Estados para Drag & Drop de etiquetas
+  const [draggedTagId, setDraggedTagId] = useState<string | null>(null);
+  const [dragOverTargetId, setDragOverTargetId] = useState<string | null>(null);
+  const [isOverRootZone, setIsOverRootZone] = useState(false);
+  const dragOccurredRef = React.useRef(false);
+
   // Queries reactivas con Dexie
   const tags = useLiveQuery(() => db.tags.toArray()) || [];
   const notes = useLiveQuery(() => db.notes.toArray()) || [];
@@ -130,6 +136,119 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (children.length === 0) return 0;
     return 1 + Math.max(...children.map((c) => getMaxSubtreeDepth(c.id, allTags)));
   };
+
+  const canDropTag = (sourceId: string | null, targetId: string | null): boolean => {
+    if (!sourceId) return false;
+    if (sourceId === 'sin-etiqueta') return false;
+    if (targetId === 'sin-etiqueta') return false;
+    if (sourceId === targetId) return false;
+
+    const sourceTag = tags.find((t) => t.id === sourceId);
+    if (!sourceTag) return false;
+
+    // Soltar en raíz (desanidar a etiqueta principal)
+    if (!targetId) {
+      return Boolean(sourceTag.parentId);
+    }
+
+    const targetTag = tags.find((t) => t.id === targetId);
+    if (!targetTag) return false;
+
+    // No mezclar etiquetas archivadas con activas
+    if (Boolean(sourceTag.archived) !== Boolean(targetTag.archived)) return false;
+
+    // Ya es hija de este destino
+    if (sourceTag.parentId === targetTag.id) return false;
+
+    // No se puede soltar en uno de sus propios descendientes
+    const descendants = getDescendantTags(sourceTag.id, tags);
+    if (descendants.some((d) => d.id === targetTag.id)) return false;
+
+    // Máximo 2 niveles de subetiquetas (raíz -> hija -> nieta)
+    const targetDepth = getTagDepth(targetTag.id, tags);
+    if (targetDepth >= 2) return false;
+
+    const subtreeDepth = getMaxSubtreeDepth(sourceTag.id, tags);
+    if (targetDepth + 1 + subtreeDepth > 2) return false;
+
+    return true;
+  };
+
+  const getTagDragProps = (tag: Tag) => {
+    if (tag.id === 'sin-etiqueta') {
+      return {
+        draggable: false,
+        isDraggingThis: false,
+        isDragOverThis: false,
+        isValidDropTarget: false,
+      };
+    }
+
+    const isDraggingThis = draggedTagId === tag.id;
+    const isDragOverThis = dragOverTargetId === tag.id;
+    const isValidDropTarget = draggedTagId ? canDropTag(draggedTagId, tag.id) : false;
+
+    return {
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => {
+        e.stopPropagation();
+        dragOccurredRef.current = true;
+        setDraggedTagId(tag.id);
+        e.dataTransfer.setData('text/plain', tag.id);
+        e.dataTransfer.effectAllowed = 'move';
+      },
+      onDragEnd: (e: React.DragEvent) => {
+        e.stopPropagation();
+        setDraggedTagId(null);
+        setDragOverTargetId(null);
+        setIsOverRootZone(false);
+        setTimeout(() => {
+          dragOccurredRef.current = false;
+        }, 120);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        if (draggedTagId && canDropTag(draggedTagId, tag.id)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          if (dragOverTargetId !== tag.id) {
+            setDragOverTargetId(tag.id);
+          }
+        }
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        e.stopPropagation();
+        const related = e.relatedTarget as Node | null;
+        if (!e.currentTarget.contains(related)) {
+          if (dragOverTargetId === tag.id) {
+            setDragOverTargetId(null);
+          }
+        }
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const sourceId = e.dataTransfer.getData('text/plain') || draggedTagId;
+        setDraggedTagId(null);
+        setDragOverTargetId(null);
+        setIsOverRootZone(false);
+
+        if (sourceId && canDropTag(sourceId, tag.id)) {
+          const sourceTag = tags.find((t) => t.id === sourceId);
+          if (sourceTag) {
+            handleMoveTag(sourceTag, tag.id);
+          }
+        }
+      },
+      isDraggingThis,
+      isDragOverThis,
+      isValidDropTarget,
+    };
+  };
+
+  const draggedTag = tags.find((t) => t.id === draggedTagId);
+  const isDraggingSubtag = Boolean(draggedTag?.parentId && !draggedTag.archived);
+  const isDraggingArchivedSubtag = Boolean(draggedTag?.parentId && draggedTag.archived);
 
   const openContextMenu = (
     e: React.MouseEvent,
@@ -215,6 +334,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         id: tagToMove.id,
         name: tagToMove.name,
         color: tagToMove.color,
+        parentId: '',
+        ...(tagToMove.archived !== undefined ? { archived: tagToMove.archived } : {}),
       });
     } else {
       if (newParentId === tagToMove.id) return;
@@ -240,7 +361,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         name: tagToMove.name,
         color: parentTag.color,
         parentId: newParentId,
+        ...(tagToMove.archived !== undefined ? { archived: tagToMove.archived } : {}),
       });
+
+      // Actualizar también el color de todos sus descendientes para mantener armonía visual
+      for (const d of descendants) {
+        await db.tags.update(d.id, { color: parentTag.color });
+      }
     }
     if (token) {
       scheduleSync(token);
@@ -577,6 +704,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           ) : (
             <div className="space-y-1">
+              {/* Zona para soltar y convertir en raíz archivada si se arrastra una subetiqueta archivada */}
+              {isDraggingArchivedSubtag && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (!isOverRootZone) setIsOverRootZone(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.stopPropagation();
+                    const related = e.relatedTarget as Node | null;
+                    if (!e.currentTarget.contains(related)) {
+                      setIsOverRootZone(false);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const sourceId = e.dataTransfer.getData('text/plain') || draggedTagId;
+                    setDraggedTagId(null);
+                    setDragOverTargetId(null);
+                    setIsOverRootZone(false);
+                    if (sourceId) {
+                      const sourceTag = tags.find((t) => t.id === sourceId);
+                      if (sourceTag && sourceTag.parentId) {
+                        handleMoveTag(sourceTag, null);
+                      }
+                    }
+                  }}
+                  className={`mb-2 mx-1 px-3 py-1.5 border-2 border-dashed rounded-lg text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    isOverRootZone
+                      ? 'border-[#3F6E64] bg-[#3F6E64]/15 text-[#3F6E64] font-semibold scale-[1.02] shadow-sm'
+                      : 'border-[#E4DECE] bg-[#FAF8F5] text-[#8A8478]'
+                  }`}
+                >
+                  <FolderInput className="w-3.5 h-3.5" />
+                  <span className="text-[10.5px]">Soltar aquí para convertir en raíz archivada</span>
+                </div>
+              )}
+
               {archivedRootTags.map((rootTag: Tag) => {
                 const active = isFilterActive({
                   type: 'tag',
@@ -585,22 +753,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 });
                 const count = getTagCount(rootTag);
                 const childTags = getArchivedChildTags(rootTag.id);
+                const { isDraggingThis, isDragOverThis, isValidDropTarget, ...dragHandlers } =
+                  getTagDragProps(rootTag);
 
                 return (
                   <div key={rootTag.id} className="space-y-0.5">
                     <div
+                      {...dragHandlers}
                       onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
-                      onClick={() =>
+                      onClick={() => {
+                        if (dragOccurredRef.current) return;
                         onSelectFilter({
                           type: 'tag',
                           tagId: rootTag.id,
                           tagName: rootTag.name,
-                        })
-                      }
+                        });
+                      }}
                       className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
                         active
                           ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                           : 'hover:bg-black/5 text-[#2B2A28]/80'
+                      } ${
+                        isDraggingThis
+                          ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                          : ''
+                      } ${
+                        isDragOverThis
+                          ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
+                          : ''
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -613,31 +793,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           archivada
                         </span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openContextMenu(e, 'tag', rootTag);
-                          }}
-                          className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                            active
-                              ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                              : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                          }`}
-                          title="Opciones de etiqueta archivada"
-                        >
-                          <MoreVertical className="w-3 h-3" />
+                      {isDragOverThis ? (
+                        <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
+                          <CornerDownRight className="w-3 h-3" />
+                          Hacer hija
                         </span>
-                        <span
-                          className={`text-[11px] ${
-                            active ? 'text-white/80' : 'text-[#8A8478]'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openContextMenu(e, 'tag', rootTag);
+                            }}
+                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                              active
+                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                            }`}
+                            title="Opciones de etiqueta archivada"
+                          >
+                            <MoreVertical className="w-3 h-3" />
+                          </span>
+                          <span
+                            className={`text-[11px] ${
+                              active ? 'text-white/80' : 'text-[#8A8478]'
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Subetiquetas hijas de la raíz archivada */}
@@ -649,22 +837,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       });
                       const childCount = getTagCount(child);
                       const grandChildren = getArchivedChildTags(child.id);
+                      const { isDraggingThis, isDragOverThis, isValidDropTarget, ...childDragHandlers } =
+                        getTagDragProps(child);
 
                       return (
                         <div key={child.id} className="space-y-0.5">
                           <div
+                            {...childDragHandlers}
                             onContextMenu={(e) => openContextMenu(e, 'tag', child)}
-                            onClick={() =>
+                            onClick={() => {
+                              if (dragOccurredRef.current) return;
                               onSelectFilter({
                                 type: 'tag',
                                 tagId: child.id,
                                 tagName: child.name,
-                              })
-                            }
+                              });
+                            }}
                             className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
                               childActive
                                 ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                                 : 'hover:bg-black/5 text-[#2B2A28]/80'
+                            } ${
+                              isDraggingThis
+                                ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                                : ''
+                            } ${
+                              isDragOverThis
+                                ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
+                                : ''
                             }`}
                           >
                             <div className="flex items-center gap-2 min-w-0">
@@ -679,31 +879,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-1">
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openContextMenu(e, 'tag', child);
-                                }}
-                                className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                  childActive
-                                    ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                    : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                                }`}
-                                title="Opciones de subetiqueta"
-                              >
-                                <MoreVertical className="w-3 h-3" />
+                            {isDragOverThis ? (
+                              <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
+                                <CornerDownRight className="w-3 h-3" />
+                                Hacer nieta
                               </span>
-                              <span
-                                className={`text-[10.5px] ${
-                                  childActive ? 'text-white/80' : 'text-[#8A8478]'
-                                }`}
-                              >
-                                {childCount}
-                              </span>
-                            </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openContextMenu(e, 'tag', child);
+                                  }}
+                                  className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                    childActive
+                                      ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                      : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                                  }`}
+                                  title="Opciones de subetiqueta"
+                                >
+                                  <MoreVertical className="w-3 h-3" />
+                                </span>
+                                <span
+                                  className={`text-[10.5px] ${
+                                    childActive ? 'text-white/80' : 'text-[#8A8478]'
+                                  }`}
+                                >
+                                  {childCount}
+                                </span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Subetiquetas nietas archivadas */}
@@ -714,21 +922,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                               tagName: grandChild.name,
                             });
                             const grandChildCount = getExactTagCount(grandChild.name);
+                            const { isDraggingThis, ...grandChildDragHandlers } =
+                              getTagDragProps(grandChild);
+
                             return (
                               <div
                                 key={grandChild.id}
+                                {...grandChildDragHandlers}
                                 onContextMenu={(e) => openContextMenu(e, 'tag', grandChild)}
-                                onClick={() =>
+                                onClick={() => {
+                                  if (dragOccurredRef.current) return;
                                   onSelectFilter({
                                     type: 'tag',
                                     tagId: grandChild.id,
                                     tagName: grandChild.name,
-                                  })
-                                }
+                                  });
+                                }}
                                 className={`w-full flex items-center justify-between pl-11 pr-3 py-1.5 rounded-lg text-[11px] font-medium transition-all group cursor-pointer ${
                                   grandChildActive
                                     ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                                     : 'hover:bg-black/5 text-[#2B2A28]/80'
+                                } ${
+                                  isDraggingThis
+                                    ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                                    : ''
                                 }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0">
@@ -747,6 +964,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   <span
                                     role="button"
                                     tabIndex={0}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       openContextMenu(e, 'tag', grandChild);
@@ -863,6 +1081,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
+          {/* Zona para soltar y convertir en etiqueta principal si se arrastra una subetiqueta */}
+          {isDraggingSubtag && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'move';
+                if (!isOverRootZone) setIsOverRootZone(true);
+              }}
+              onDragLeave={(e) => {
+                e.stopPropagation();
+                const related = e.relatedTarget as Node | null;
+                if (!e.currentTarget.contains(related)) {
+                  setIsOverRootZone(false);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const sourceId = e.dataTransfer.getData('text/plain') || draggedTagId;
+                setDraggedTagId(null);
+                setDragOverTargetId(null);
+                setIsOverRootZone(false);
+                if (sourceId) {
+                  const sourceTag = tags.find((t) => t.id === sourceId);
+                  if (sourceTag && sourceTag.parentId) {
+                    handleMoveTag(sourceTag, null);
+                  }
+                }
+              }}
+              className={`mb-2 mx-1 px-3 py-2 border-2 border-dashed rounded-lg text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                isOverRootZone
+                  ? 'border-[#3F6E64] bg-[#3F6E64]/15 text-[#3F6E64] font-semibold scale-[1.02] shadow-sm'
+                  : 'border-[#E4DECE] bg-[#FAF8F5] text-[#8A8478]'
+              }`}
+            >
+              <FolderInput className="w-3.5 h-3.5" />
+              <span className="text-[11px]">Soltar aquí para convertir en etiqueta principal</span>
+            </div>
+          )}
+
           <div className="space-y-1">
             {rootTags.map((rootTag: Tag) => {
               const active = isFilterActive({
@@ -872,22 +1131,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
               });
               const count = getTagCount(rootTag);
               const childTags = getChildTags(rootTag.id);
+              const { isDraggingThis, isDragOverThis, isValidDropTarget, ...dragHandlers } =
+                getTagDragProps(rootTag);
 
               return (
                 <div key={rootTag.id} className="space-y-0.5">
                   <div
+                    {...dragHandlers}
                     onContextMenu={(e) => openContextMenu(e, 'tag', rootTag)}
-                    onClick={() =>
+                    onClick={() => {
+                      if (dragOccurredRef.current) return;
                       onSelectFilter({
                         type: 'tag',
                         tagId: rootTag.id,
                         tagName: rootTag.name,
-                      })
-                    }
+                      });
+                    }}
                     className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all group cursor-pointer ${
                       active
                         ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                         : 'hover:bg-black/5 text-[#2B2A28]'
+                    } ${
+                      isDraggingThis
+                        ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                        : ''
+                    } ${
+                      isDragOverThis
+                        ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
+                        : ''
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -897,52 +1168,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       />
                       <span className="truncate">{rootTag.name}</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      {rootTag.id !== 'sin-etiqueta' && (
-                        <>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setAddingSubtagForId(rootTag.id);
-                              setSubtagName('');
-                            }}
-                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                              active
-                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                            }`}
-                            title={`Añadir subetiqueta a ${rootTag.name}`}
-                          >
-                            <Plus className="w-3 h-3" />
-                          </span>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openContextMenu(e, 'tag', rootTag);
-                            }}
-                            className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                              active
-                                ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                            }`}
-                            title="Opciones de etiqueta"
-                          >
-                            <MoreVertical className="w-3 h-3" />
-                          </span>
-                        </>
-                      )}
-                      <span
-                        className={`text-[11px] ${
-                          active ? 'text-white/80' : 'text-[#8A8478]'
-                        }`}
-                      >
-                        {count}
+                    {isDragOverThis ? (
+                      <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
+                        <CornerDownRight className="w-3 h-3" />
+                        Hacer hija
                       </span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        {rootTag.id !== 'sin-etiqueta' && (
+                          <>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAddingSubtagForId(rootTag.id);
+                                setSubtagName('');
+                              }}
+                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                active
+                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                              }`}
+                              title={`Añadir subetiqueta a ${rootTag.name}`}
+                            >
+                              <Plus className="w-3 h-3" />
+                            </span>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openContextMenu(e, 'tag', rootTag);
+                              }}
+                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                active
+                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                              }`}
+                              title="Opciones de etiqueta"
+                            >
+                              <MoreVertical className="w-3 h-3" />
+                            </span>
+                          </>
+                        )}
+                        <span
+                          className={`text-[11px] ${
+                            active ? 'text-white/80' : 'text-[#8A8478]'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Formulario para añadir subetiqueta */}
@@ -1008,22 +1288,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     const childCount = getTagCount(child);
                     const desaturatedBg = desaturateColor(child.color, 0.55);
                     const grandChildren = getChildTags(child.id);
+                    const { isDraggingThis, isDragOverThis, isValidDropTarget, ...childDragHandlers } =
+                      getTagDragProps(child);
 
                     return (
                       <div key={child.id} className="space-y-0.5">
                         <div
+                          {...childDragHandlers}
                           onContextMenu={(e) => openContextMenu(e, 'tag', child)}
-                          onClick={() =>
+                          onClick={() => {
+                            if (dragOccurredRef.current) return;
                             onSelectFilter({
                               type: 'tag',
                               tagId: child.id,
                               tagName: child.name,
-                            })
-                          }
+                            });
+                          }}
                           className={`w-full flex items-center justify-between pl-7 pr-3 py-1.5 rounded-lg text-[11.5px] font-medium transition-all group cursor-pointer ${
                             childActive
                               ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                               : 'hover:bg-black/5 text-[#2B2A28]'
+                          } ${
+                            isDraggingThis
+                              ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                              : ''
+                          } ${
+                            isDragOverThis
+                              ? 'ring-2 ring-[#3F6E64] bg-[#3F6E64]/15 shadow-sm scale-[1.01]'
+                              : ''
                           }`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
@@ -1033,48 +1325,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             />
                             <span className="truncate">{child.name}</span>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAddingSubtagForId(child.id);
-                                setSubtagName('');
-                              }}
-                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                childActive
-                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                              }`}
-                              title={`Añadir subetiqueta a ${child.name}`}
-                            >
-                              <Plus className="w-3 h-3" />
+                          {isDragOverThis ? (
+                            <span className="text-[10px] text-[#3F6E64] font-semibold flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded shadow-2xs">
+                              <CornerDownRight className="w-3 h-3" />
+                              Hacer nieta
                             </span>
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openContextMenu(e, 'tag', child);
-                              }}
-                              className={`p-0.5 rounded transition-opacity cursor-pointer ${
-                                childActive
-                                  ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
-                                  : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
-                              }`}
-                              title="Opciones de subetiqueta"
-                            >
-                              <MoreVertical className="w-3 h-3" />
-                            </span>
-                            <span
-                              className={`text-[10.5px] ${
-                                childActive ? 'text-white/80' : 'text-[#8A8478]'
-                              }`}
-                            >
-                              {childCount}
-                            </span>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAddingSubtagForId(child.id);
+                                  setSubtagName('');
+                                }}
+                                className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                  childActive
+                                    ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                    : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                                }`}
+                                title={`Añadir subetiqueta a ${child.name}`}
+                              >
+                                <Plus className="w-3 h-3" />
+                              </span>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openContextMenu(e, 'tag', child);
+                                }}
+                                className={`p-0.5 rounded transition-opacity cursor-pointer ${
+                                  childActive
+                                    ? 'opacity-0 group-hover:opacity-100 text-white/80 hover:bg-white/10'
+                                    : 'opacity-0 group-hover:opacity-100 text-[#8A8478] hover:bg-black/10'
+                                }`}
+                                title="Opciones de subetiqueta"
+                              >
+                                <MoreVertical className="w-3 h-3" />
+                              </span>
+                              <span
+                                className={`text-[10.5px] ${
+                                  childActive ? 'text-white/80' : 'text-[#8A8478]'
+                                }`}
+                              >
+                                {childCount}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Formulario para añadir subetiqueta de nivel 2 */}
@@ -1139,22 +1440,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           });
                           const grandChildCount = getExactTagCount(grandChild.name);
                           const grandChildBg = desaturateColor(grandChild.color, 0.3);
+                          const { isDraggingThis, ...grandChildDragHandlers } =
+                            getTagDragProps(grandChild);
 
                           return (
                             <div
                               key={grandChild.id}
+                              {...grandChildDragHandlers}
                               onContextMenu={(e) => openContextMenu(e, 'tag', grandChild)}
-                              onClick={() =>
+                              onClick={() => {
+                                if (dragOccurredRef.current) return;
                                 onSelectFilter({
                                   type: 'tag',
                                   tagId: grandChild.id,
                                   tagName: grandChild.name,
-                                })
-                              }
+                                });
+                              }}
                               className={`w-full flex items-center justify-between pl-11 pr-3 py-1.5 rounded-lg text-[11px] font-medium transition-all group cursor-pointer ${
                                 grandChildActive
                                   ? 'bg-[#3F6E64] text-[#F7F4EE] font-semibold shadow-sm'
                                   : 'hover:bg-black/5 text-[#2B2A28]'
+                              } ${
+                                isDraggingThis
+                                  ? 'opacity-35 scale-[0.98] border border-dashed border-[#8A8478]'
+                                  : ''
                               }`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
@@ -1168,6 +1477,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <span
                                   role="button"
                                   tabIndex={0}
+                                  onMouseDown={(e) => e.stopPropagation()}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     openContextMenu(e, 'tag', grandChild);

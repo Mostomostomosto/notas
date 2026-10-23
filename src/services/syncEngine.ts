@@ -432,8 +432,8 @@ export async function syncTags(activeToken: string): Promise<void> {
     } else {
       tagMap.set(key, {
         ...existing,
-        // Si la local tiene parentId y la remota no, o viceversa, conservar el parentId
-        parentId: lt.parentId || existing.parentId,
+        // Si la local tiene parentId o fue desanidada (''), reflejar el estado local
+        parentId: lt.parentId === '' ? undefined : (lt.parentId || existing.parentId),
         color: existing.color || lt.color,
         archived: existing.archived ?? lt.archived ?? false,
       });
