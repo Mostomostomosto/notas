@@ -113,6 +113,101 @@ export function convertLegacyMarkdownToHtml(text: string): string {
     .replace(/\*(.+?)\*/g, '<i>$1</i>');
 }
 
+export function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function replaceNthOccurrence(
+  str: string,
+  regex: RegExp,
+  replacement: string,
+  targetIndex: number = 0
+): string {
+  let count = 0;
+  let hasReplaced = false;
+  const result = str.replace(regex, (match) => {
+    if (count === targetIndex) {
+      hasReplaced = true;
+      count++;
+      return replacement;
+    }
+    count++;
+    return match;
+  });
+  if (!hasReplaced && count > 0) return str.replace(regex, replacement);
+  return result;
+}
+
+export function applyFormatToMarkdownContent(
+  content: string,
+  selectedText: string,
+  format: 'bold' | 'italic' | 'color' | 'clear',
+  colorHex?: string,
+  occurrenceIndex: number = 0
+): string {
+  const cleanSel = selectedText.trim();
+  if (!cleanSel || !content) return content;
+
+  const escaped = escapeRegExp(cleanSel);
+
+  if (format === 'bold') {
+    const boldRegex = new RegExp(`\\*\\*${escaped}\\*\\*`, 'g');
+    if (boldRegex.test(content)) {
+      return replaceNthOccurrence(content, boldRegex, cleanSel, occurrenceIndex);
+    }
+    const plainRegex = new RegExp(escaped, 'g');
+    if (plainRegex.test(content)) {
+      return replaceNthOccurrence(content, plainRegex, `**${cleanSel}**`, occurrenceIndex);
+    }
+  } else if (format === 'italic') {
+    const italicRegex = new RegExp(`(?<!\\*)\\*${escaped}\\*(?!\\*)`, 'g');
+    if (italicRegex.test(content)) {
+      return replaceNthOccurrence(content, italicRegex, cleanSel, occurrenceIndex);
+    }
+    const plainRegex = new RegExp(escaped, 'g');
+    if (plainRegex.test(content)) {
+      return replaceNthOccurrence(content, plainRegex, `*${cleanSel}*`, occurrenceIndex);
+    }
+  } else if (format === 'color') {
+    const hex = colorHex || '#3F6E64';
+    const colorRegex = new RegExp(`<span style="color:\\s*[^"]+">\\s*${escaped}\\s*<\\/span>`, 'gi');
+    if (colorRegex.test(content)) {
+      return replaceNthOccurrence(
+        content,
+        colorRegex,
+        `<span style="color: ${hex}">${cleanSel}</span>`,
+        occurrenceIndex
+      );
+    }
+    const plainRegex = new RegExp(escaped, 'g');
+    if (plainRegex.test(content)) {
+      return replaceNthOccurrence(
+        content,
+        plainRegex,
+        `<span style="color: ${hex}">${cleanSel}</span>`,
+        occurrenceIndex
+      );
+    }
+  } else if (format === 'clear') {
+    let res = content;
+    const colorRegex = new RegExp(`<span style="color:\\s*[^"]+">\\s*${escaped}\\s*<\\/span>`, 'gi');
+    if (colorRegex.test(res)) {
+      res = replaceNthOccurrence(res, colorRegex, cleanSel, occurrenceIndex);
+    }
+    const boldRegex = new RegExp(`\\*\\*${escaped}\\*\\*`, 'g');
+    if (boldRegex.test(res)) {
+      res = replaceNthOccurrence(res, boldRegex, cleanSel, occurrenceIndex);
+    }
+    const italicRegex = new RegExp(`(?<!\\*)\\*${escaped}\\*(?!\\*)`, 'g');
+    if (italicRegex.test(res)) {
+      res = replaceNthOccurrence(res, italicRegex, cleanSel, occurrenceIndex);
+    }
+    return res;
+  }
+
+  return content;
+}
+
 export function applyMarkdownFormat(
   textarea: HTMLTextAreaElement,
   format: 'bold' | 'italic' | 'color' | 'clear',
@@ -123,11 +218,24 @@ export function applyMarkdownFormat(
   const val = textarea.value;
   const selectedText = val.substring(start, end);
 
+  // Comprobar si la selección tiene ya delimitadores inmediatamente antes y después
+  const before2 = val.substring(Math.max(0, start - 2), start);
+  const after2 = val.substring(end, Math.min(val.length, end + 2));
+  const before1 = val.substring(Math.max(0, start - 1), start);
+  const after1 = val.substring(end, Math.min(val.length, end + 1));
+
   let replacement = '';
   let newCursorStart = start;
   let newCursorEnd = end;
 
   if (format === 'bold') {
+    if (before2 === '**' && after2 === '**') {
+      const nextValue = val.substring(0, start - 2) + selectedText + val.substring(end + 2);
+      textarea.value = nextValue;
+      textarea.focus();
+      textarea.setSelectionRange(start - 2, start - 2 + selectedText.length);
+      return nextValue;
+    }
     if (selectedText.startsWith('**') && selectedText.endsWith('**') && selectedText.length >= 4) {
       replacement = selectedText.slice(2, -2);
       newCursorStart = start;
@@ -142,6 +250,13 @@ export function applyMarkdownFormat(
       newCursorEnd = start + 2;
     }
   } else if (format === 'italic') {
+    if (before1 === '*' && after1 === '*' && before2 !== '**' && after2 !== '**') {
+      const nextValue = val.substring(0, start - 1) + selectedText + val.substring(end + 1);
+      textarea.value = nextValue;
+      textarea.focus();
+      textarea.setSelectionRange(start - 1, start - 1 + selectedText.length);
+      return nextValue;
+    }
     if (
       selectedText.startsWith('*') &&
       selectedText.endsWith('*') &&
@@ -319,6 +434,9 @@ interface AutoResizeTextBlockProps {
   onFocus?: () => void;
   onBlur?: () => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onSelect?: (e: React.SyntheticEvent<HTMLTextAreaElement>) => void;
+  onMouseUp?: (e: React.MouseEvent<HTMLTextAreaElement>) => void;
+  onKeyUp?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
 const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
@@ -331,6 +449,9 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
   onFocus,
   onBlur,
   onKeyDown,
+  onSelect,
+  onMouseUp,
+  onKeyUp,
 }) => {
   const localRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -403,6 +524,9 @@ const AutoResizeTextBlock: React.FC<AutoResizeTextBlockProps> = ({
       onFocus={onFocus}
       onBlur={onBlur}
       onKeyDown={onKeyDown}
+      onSelect={onSelect}
+      onMouseUp={onMouseUp}
+      onKeyUp={onKeyUp}
       placeholder={placeholder}
       className={className}
       style={{
@@ -534,6 +658,7 @@ interface MarkdownBlockItemProps {
     type: 'markdown';
     blockId: string;
     textarea: HTMLTextAreaElement | null;
+    element?: HTMLElement | null;
   }) => void;
 }
 
@@ -547,6 +672,7 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   const [isEditing, setIsEditing] = useState(() => !block.content);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const [isMdColorOpen, setIsMdColorOpen] = useState(false);
   const [mdActiveColor, setMdActiveColor] = useState('#3F6E64');
   const mdColorBtnRef = useRef<HTMLButtonElement>(null);
@@ -567,6 +693,36 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   const handleMdFormat = (fmt: 'bold' | 'italic' | 'color' | 'clear', color?: string) => {
     if (!textareaRef.current) return;
     const nextVal = applyMarkdownFormat(textareaRef.current, fmt, color);
+    onUpdateContent(nextVal);
+  };
+
+  const handlePreviewFormat = (fmt: 'bold' | 'italic' | 'color' | 'clear', color?: string) => {
+    const sel = window.getSelection();
+    const selText = sel ? sel.toString().trim() : '';
+    if (!selText) {
+      setIsEditing(true);
+      setTimeout(() => {
+        if (textareaRef.current) {
+          handleMdFormat(fmt, color);
+        }
+      }, 50);
+      return;
+    }
+
+    let occurrenceIndex = 0;
+    if (previewRef.current && sel && sel.rangeCount > 0) {
+      try {
+        const range = sel.getRangeAt(0);
+        const preRange = range.cloneRange();
+        preRange.selectNodeContents(previewRef.current);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        const precedingText = preRange.toString();
+        const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
+        occurrenceIndex = matches ? matches.length : 0;
+      } catch (_) {}
+    }
+
+    const nextVal = applyFormatToMarkdownContent(block.content, selText, fmt, color, occurrenceIndex);
     onUpdateContent(nextVal);
   };
 
@@ -596,7 +752,11 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
   }, [block.content]);
 
   return (
-    <div className="rounded-xl border border-[#E4DECE] bg-[#FAF8F5] overflow-hidden transition-all shadow-2xs group/md">
+    <div
+      data-block-id={block.id}
+      data-block-type="markdown"
+      className="rounded-xl border border-[#E4DECE] bg-[#FAF8F5] overflow-hidden transition-all shadow-2xs group/md"
+    >
       {/* Barra superior del bloque Markdown */}
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#F4EFE6]/70 border-b border-[#E4DECE] text-xs text-[#8A8478]">
         <div className="flex items-center gap-1.5 font-medium min-w-0">
@@ -614,58 +774,72 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
 
         {!disabled && (
           <div className="flex items-center gap-1 shrink-0">
-            {/* Si está editando, mostramos barra de herramientas rápida de formato */}
-            {isEditing && (
-              <div className="flex items-center gap-0.5 border-r border-[#E4DECE] pr-1.5 mr-0.5">
+            {/* Barra de herramientas rápida de formato en el bloque (activa tanto en edición como en vista previa) */}
+            <div className="flex items-center gap-0.5 border-r border-[#E4DECE] pr-1.5 mr-0.5">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (isEditing) {
+                    handleMdFormat('bold');
+                  } else {
+                    handlePreviewFormat('bold');
+                  }
+                }}
+                className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
+                title="Negrita (**)"
+              >
+                <Bold className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (isEditing) {
+                    handleMdFormat('italic');
+                  } else {
+                    handlePreviewFormat('italic');
+                  }
+                }}
+                className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
+                title="Cursiva (*)"
+              >
+                <Italic className="w-3 h-3" />
+              </button>
+              <div className="relative color-picker-popover-container">
                 <button
+                  ref={mdColorBtnRef}
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleMdFormat('bold')}
-                  className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
-                  title="Negrita (**)"
+                  onClick={handleToggleMdColor}
+                  className="flex items-center gap-0.5 p-1 rounded hover:bg-white transition-colors cursor-pointer"
+                  title="Color de texto"
                 >
-                  <Bold className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleMdFormat('italic')}
-                  className="p-1 rounded hover:bg-white text-[#2B2A28] transition-colors cursor-pointer"
-                  title="Cursiva (*)"
-                >
-                  <Italic className="w-3 h-3" />
-                </button>
-                <div className="relative color-picker-popover-container">
-                  <button
-                    ref={mdColorBtnRef}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={handleToggleMdColor}
-                    className="flex items-center gap-0.5 p-1 rounded hover:bg-white transition-colors cursor-pointer"
-                    title="Color de texto"
-                  >
-                    <div className="flex flex-col items-center">
-                      <Baseline className="w-3 h-3 text-[#2B2A28]" />
-                      <span
-                        className="w-3 h-[2px] rounded-full mt-[-1px]"
-                        style={{ backgroundColor: mdActiveColor }}
-                      />
-                    </div>
-                  </button>
-                  {isMdColorOpen && (
-                    <ColorPickerPopover
-                      activeColor={mdActiveColor}
-                      onSelectColor={(c) => {
-                        setMdActiveColor(c);
-                        handleMdFormat('color', c);
-                      }}
-                      onClose={() => setIsMdColorOpen(false)}
-                      position={mdColorPos}
+                  <div className="flex flex-col items-center">
+                    <Baseline className="w-3 h-3 text-[#2B2A28]" />
+                    <span
+                      className="w-3 h-[2px] rounded-full mt-[-1px]"
+                      style={{ backgroundColor: mdActiveColor }}
                     />
-                  )}
-                </div>
+                  </div>
+                </button>
+                {isMdColorOpen && (
+                  <ColorPickerPopover
+                    activeColor={mdActiveColor}
+                    onSelectColor={(c) => {
+                      setMdActiveColor(c);
+                      if (isEditing) {
+                        handleMdFormat('color', c);
+                      } else {
+                        handlePreviewFormat('color', c);
+                      }
+                    }}
+                    onClose={() => setIsMdColorOpen(false)}
+                    position={mdColorPos}
+                  />
+                )}
               </div>
-            )}
+            </div>
 
             <button
               type="button"
@@ -723,6 +897,31 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
                   type: 'markdown',
                   blockId: block.id,
                   textarea: textareaRef.current,
+                  element: previewRef.current,
+                });
+              }}
+              onSelect={() => {
+                onSetActiveTarget?.({
+                  type: 'markdown',
+                  blockId: block.id,
+                  textarea: textareaRef.current,
+                  element: previewRef.current,
+                });
+              }}
+              onMouseUp={() => {
+                onSetActiveTarget?.({
+                  type: 'markdown',
+                  blockId: block.id,
+                  textarea: textareaRef.current,
+                  element: previewRef.current,
+                });
+              }}
+              onKeyUp={() => {
+                onSetActiveTarget?.({
+                  type: 'markdown',
+                  blockId: block.id,
+                  textarea: textareaRef.current,
+                  element: previewRef.current,
                 });
               }}
               onKeyDown={(e) => {
@@ -740,7 +939,21 @@ const MarkdownBlockItem: React.FC<MarkdownBlockItemProps> = ({
           </div>
         ) : block.content ? (
           <div
-            className="markdown-content select-text"
+            ref={previewRef}
+            data-block-id={block.id}
+            data-block-type="markdown-preview"
+            className="markdown-content select-text cursor-text"
+            onMouseUp={() => {
+              const sel = window.getSelection();
+              if (sel && !sel.isCollapsed) {
+                onSetActiveTarget?.({
+                  type: 'markdown',
+                  blockId: block.id,
+                  textarea: null,
+                  element: previewRef.current,
+                });
+              }
+            }}
             dangerouslySetInnerHTML={{ __html: parsedHtml }}
           />
         ) : (
@@ -1924,40 +2137,91 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
   // Actualizar estado activo de Negrita, Cursiva y Color según selección o cursor actual
   const updateActiveFormats = () => {
     try {
-      setIsBoldActive(document.queryCommandState('bold'));
-      setIsItalicActive(document.queryCommandState('italic'));
-      const val = document.queryCommandValue('foreColor');
-      if (val) {
-        const hex = rgbToHex(val);
-        if (hex) setActiveColor(hex);
+      const sel = window.getSelection();
+      let foundBold = false;
+      let foundItalic = false;
+      let foundColor: string | null = null;
+
+      if (sel && sel.anchorNode) {
+        let curr: HTMLElement | null =
+          sel.anchorNode instanceof HTMLElement
+            ? sel.anchorNode
+            : sel.anchorNode.parentElement;
+        while (curr && curr !== noteEditorRef.current) {
+          if (curr.tagName === 'B' || curr.tagName === 'STRONG') {
+            foundBold = true;
+          }
+          if (curr.tagName === 'I' || curr.tagName === 'EM') {
+            foundItalic = true;
+          }
+          if (curr.style?.color) {
+            foundColor = rgbToHex(curr.style.color);
+          }
+          curr = curr.parentElement;
+        }
+      }
+
+      setIsBoldActive(foundBold || document.queryCommandState('bold'));
+      setIsItalicActive(foundItalic || document.queryCommandState('italic'));
+      if (foundColor) {
+        setActiveColor(foundColor);
+      } else {
+        const val = document.queryCommandValue('foreColor');
+        if (val) {
+          const hex = rgbToHex(val);
+          if (hex) setActiveColor(hex);
+        }
       }
     } catch (_) {}
   };
 
   const resolveActiveTarget = () => {
-    if (activeTargetRef.current?.element && document.body.contains(activeTargetRef.current.element)) {
-      return activeTargetRef.current;
-    }
-    if (activeTargetRef.current?.textarea && document.body.contains(activeTargetRef.current.textarea)) {
-      return activeTargetRef.current;
-    }
     const sel = window.getSelection();
     if (sel && sel.anchorNode) {
       let node: Node | null = sel.anchorNode;
       while (node) {
         if (node instanceof HTMLElement && node.getAttribute('data-block-id')) {
           const blockId = node.getAttribute('data-block-id')!;
-          const el = blockElementsRef.current.get(blockId) || (node as HTMLElement);
-          activeTargetRef.current = {
-            type: 'rich',
-            blockId,
-            element: el,
-          };
-          return activeTargetRef.current;
+          const block = localNote?.blocks?.find((b) => b.id === blockId);
+          if (block?.type === 'markdown') {
+            const previewEl = (node as HTMLElement).querySelector('.markdown-content') as HTMLElement | null;
+            const textareaEl = (node as HTMLElement).querySelector('textarea') as HTMLTextAreaElement | null;
+            activeTargetRef.current = {
+              type: 'markdown',
+              blockId,
+              textarea: textareaEl || activeTargetRef.current?.textarea || null,
+              element: previewEl || (node as HTMLElement),
+            };
+            return activeTargetRef.current;
+          }
+          if (block?.type === 'heading' || block?.type === 'text') {
+            const el = blockElementsRef.current.get(blockId) || (node as HTMLElement);
+            activeTargetRef.current = {
+              type: 'rich',
+              blockId,
+              element: el,
+            };
+            return activeTargetRef.current;
+          }
         }
         node = node.parentNode;
       }
     }
+
+    if (activeTargetRef.current?.type === 'markdown') {
+      const b = localNote?.blocks?.find((blk) => blk.id === activeTargetRef.current?.blockId);
+      if (b && b.type === 'markdown') {
+        return activeTargetRef.current;
+      }
+    }
+
+    if (activeTargetRef.current?.element && document.body.contains(activeTargetRef.current.element)) {
+      return activeTargetRef.current;
+    }
+    if (activeTargetRef.current?.textarea && document.body.contains(activeTargetRef.current.textarea)) {
+      return activeTargetRef.current;
+    }
+
     if (localNote && localNote.blocks.length > 0) {
       for (const b of localNote.blocks) {
         if (b.type === 'text' || b.type === 'heading') {
@@ -1966,6 +2230,9 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
             activeTargetRef.current = { type: 'rich', blockId: b.id, element: el };
             return activeTargetRef.current;
           }
+        } else if (b.type === 'markdown') {
+          activeTargetRef.current = { type: 'markdown', blockId: b.id };
+          return activeTargetRef.current;
         }
       }
     }
@@ -1974,10 +2241,32 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   const handleToggleBold = () => {
     const target = resolveActiveTarget();
-    if (target?.type === 'markdown' && target.textarea) {
-      const newVal = applyMarkdownFormat(target.textarea, 'bold');
-      handleUpdateBlockContent(target.blockId, newVal);
-      return;
+    if (target?.type === 'markdown') {
+      if (target.textarea) {
+        const newVal = applyMarkdownFormat(target.textarea, 'bold');
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
+      const sel = window.getSelection();
+      const selText = sel ? sel.toString().trim() : '';
+      const block = localNote?.blocks?.find((b) => b.id === target.blockId);
+      if (block && block.type === 'markdown' && selText) {
+        let occIndex = 0;
+        if (target.element && sel && sel.rangeCount > 0) {
+          try {
+            const range = sel.getRangeAt(0);
+            const preRange = range.cloneRange();
+            preRange.selectNodeContents(target.element);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            const precedingText = preRange.toString();
+            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
+            occIndex = matches ? matches.length : 0;
+          } catch (_) {}
+        }
+        const newVal = applyFormatToMarkdownContent(block.content, selText, 'bold', undefined, occIndex);
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
     }
 
     if (target?.element) {
@@ -1999,10 +2288,32 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
 
   const handleToggleItalic = () => {
     const target = resolveActiveTarget();
-    if (target?.type === 'markdown' && target.textarea) {
-      const newVal = applyMarkdownFormat(target.textarea, 'italic');
-      handleUpdateBlockContent(target.blockId, newVal);
-      return;
+    if (target?.type === 'markdown') {
+      if (target.textarea) {
+        const newVal = applyMarkdownFormat(target.textarea, 'italic');
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
+      const sel = window.getSelection();
+      const selText = sel ? sel.toString().trim() : '';
+      const block = localNote?.blocks?.find((b) => b.id === target.blockId);
+      if (block && block.type === 'markdown' && selText) {
+        let occIndex = 0;
+        if (target.element && sel && sel.rangeCount > 0) {
+          try {
+            const range = sel.getRangeAt(0);
+            const preRange = range.cloneRange();
+            preRange.selectNodeContents(target.element);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            const precedingText = preRange.toString();
+            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
+            occIndex = matches ? matches.length : 0;
+          } catch (_) {}
+        }
+        const newVal = applyFormatToMarkdownContent(block.content, selText, 'italic', undefined, occIndex);
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
     }
 
     if (target?.element) {
@@ -2028,10 +2339,32 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     setIsBubbleColorOpen(false);
 
     const target = resolveActiveTarget();
-    if (target?.type === 'markdown' && target.textarea) {
-      const newVal = applyMarkdownFormat(target.textarea, 'color', colorHex);
-      handleUpdateBlockContent(target.blockId, newVal);
-      return;
+    if (target?.type === 'markdown') {
+      if (target.textarea) {
+        const newVal = applyMarkdownFormat(target.textarea, 'color', colorHex);
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
+      const sel = window.getSelection();
+      const selText = sel ? sel.toString().trim() : '';
+      const block = localNote?.blocks?.find((b) => b.id === target.blockId);
+      if (block && block.type === 'markdown' && selText) {
+        let occIndex = 0;
+        if (target.element && sel && sel.rangeCount > 0) {
+          try {
+            const range = sel.getRangeAt(0);
+            const preRange = range.cloneRange();
+            preRange.selectNodeContents(target.element);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            const precedingText = preRange.toString();
+            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
+            occIndex = matches ? matches.length : 0;
+          } catch (_) {}
+        }
+        const newVal = applyFormatToMarkdownContent(block.content, selText, 'color', colorHex, occIndex);
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
     }
 
     if (target?.element) {
@@ -2056,10 +2389,32 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
     setIsBubbleColorOpen(false);
 
     const target = resolveActiveTarget();
-    if (target?.type === 'markdown' && target.textarea) {
-      const newVal = applyMarkdownFormat(target.textarea, 'clear');
-      handleUpdateBlockContent(target.blockId, newVal);
-      return;
+    if (target?.type === 'markdown') {
+      if (target.textarea) {
+        const newVal = applyMarkdownFormat(target.textarea, 'clear');
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
+      const sel = window.getSelection();
+      const selText = sel ? sel.toString().trim() : '';
+      const block = localNote?.blocks?.find((b) => b.id === target.blockId);
+      if (block && block.type === 'markdown' && selText) {
+        let occIndex = 0;
+        if (target.element && sel && sel.rangeCount > 0) {
+          try {
+            const range = sel.getRangeAt(0);
+            const preRange = range.cloneRange();
+            preRange.selectNodeContents(target.element);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            const precedingText = preRange.toString();
+            const matches = precedingText.match(new RegExp(escapeRegExp(selText), 'g'));
+            occIndex = matches ? matches.length : 0;
+          } catch (_) {}
+        }
+        const newVal = applyFormatToMarkdownContent(block.content, selText, 'clear', undefined, occIndex);
+        handleUpdateBlockContent(target.blockId, newVal);
+        return;
+      }
     }
 
     if (target?.element) {
@@ -2102,10 +2457,13 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
                   element: blockElementsRef.current.get(blockId) || (node as HTMLElement),
                 };
               } else if (block.type === 'markdown') {
+                const previewEl = (node as HTMLElement).querySelector('.markdown-content') as HTMLElement | null;
+                const textareaEl = (node as HTMLElement).querySelector('textarea') as HTMLTextAreaElement | null;
                 activeTargetRef.current = {
                   type: 'markdown',
                   blockId,
-                  textarea: activeTargetRef.current?.textarea || null,
+                  textarea: textareaEl || activeTargetRef.current?.textarea || null,
+                  element: previewEl || (node as HTMLElement),
                 };
               }
             }
@@ -2179,6 +2537,36 @@ export const NoteDetail: React.FC<NoteDetailProps> = ({ note, token, onNoteDelet
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [isColorPickerOpen, isBubbleColorOpen]);
+
+  // Atajos de teclado Ctrl+B / Ctrl+I para la vista previa de markdown
+  useEffect(() => {
+    const handleFormatKeyDown = (e: KeyboardEvent) => {
+      if (localNote?.deleted) return;
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      if (!isCtrlOrCmd) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'b' || key === 'i') {
+        const target = resolveActiveTarget();
+        if (target?.type === 'markdown' && !target.textarea) {
+          const sel = window.getSelection();
+          if (sel && sel.toString().trim()) {
+            e.preventDefault();
+            if (key === 'b') {
+              handleToggleBold();
+            } else {
+              handleToggleItalic();
+            }
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleFormatKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleFormatKeyDown);
+    };
+  }, [localNote?.deleted, localNote?.blocks]);
 
   const handleMarkdownFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
