@@ -214,6 +214,31 @@ export const App: React.FC = () => {
     }
   };
 
+  // Eliminar una nota desde la lista o su menú contextual
+  const handleDeleteNoteFromList = async (note: Note) => {
+    if (note.deleted) {
+      if (window.confirm(`¿Eliminar definitivamente "${note.title || 'esta nota'}"?`)) {
+        await db.notes.delete(note.id);
+        handleNoteDeleted(note);
+        scheduleSync(token);
+      }
+      return;
+    }
+    const updated: Note = {
+      ...note,
+      deleted: true,
+      updatedAt: new Date().toISOString(),
+      syncStatus: 'pending',
+    };
+    await db.notes.update(note.id, {
+      deleted: true,
+      updatedAt: updated.updatedAt,
+      syncStatus: 'pending',
+    });
+    handleNoteDeleted(updated);
+    scheduleSync(token);
+  };
+
   // Restaurar la última nota eliminada
   const handleUndoDeleteNote = async () => {
     if (!lastDeletedNote) return;
@@ -398,6 +423,8 @@ export const App: React.FC = () => {
                 selectedNoteId={selectedNoteId}
                 onSelectNote={(noteId) => setSelectedNoteId(noteId)}
                 onCreateNote={handleCreateNote}
+                onDeleteNote={handleDeleteNoteFromList}
+                token={token}
               />
             )}
           </div>
